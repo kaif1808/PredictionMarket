@@ -10,7 +10,7 @@ from typing import Any
 
 import socketio
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, status
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
@@ -39,8 +39,17 @@ init_db()
 orchestrator.restore_from_db()
 
 client_dist = Path(__file__).resolve().parents[1] / "client" / "dist"
-if client_dist.exists():
-    fastapi_app.mount("/app", StaticFiles(directory=str(client_dist), html=True), name="app")
+
+@fastapi_app.get("/app/")
+async def serve_app_root():
+    return FileResponse(client_dist / "index.html")
+
+@fastapi_app.get("/app/{path:path}")
+async def serve_app(path: str):
+    file_path = client_dist / path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(client_dist / "index.html")
 
 
 class JoinRequest(BaseModel):
@@ -258,10 +267,12 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
     participant_id = ps.participant_id
 
     cookie_value = f"{session_id}:{participant_id}"
+    logger.warning(f"Setting cookie valdoria_auth={cookie_value}")
     response.set_cookie(
         key="valdoria_auth",
         value=cookie_value,
-        httponly=True,
+        path="/",
+        httponly=False,
         secure=False,
         samesite="lax",
         max_age=int(timedelta(hours=12).total_seconds()),
@@ -270,6 +281,7 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
     ps.join_token = None
     db.add(ps)
     db.commit()
+    logger.warning(f"Join successful, returning session_id={session_id}, participant_id={participant_id}")
     return {"session_id": session_id, "participant_id": participant_id, "flow_step": ps.flow_step}
 
 
@@ -929,6 +941,7 @@ def submit_debrief(payload: DebriefSubmitRequest, valdoria_auth: str | None = Co
 
 @fastapi_app.post("/flow_step")
 def update_flow_step(payload: FlowStepUpdateRequest, valdoria_auth: str | None = Cookie(default=None), db: Session = Depends(get_db)) -> dict[str, Any]:
+    logger.warning(f"flow_step received valdoria_auth: {valdoria_auth}")
     session_id, participant_id = _parse_auth_cookie(valdoria_auth)
     row = db.get(ParticipantSession, {"session_id": session_id, "participant_id": participant_id})
     if row is None:
