@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiPost } from "../../lib/api";
+import { FlowShell } from "../../components/FlowShell";
+import { AlertTriangle, CheckCircle } from "lucide-react";
 
 export default function ConsentScreen() {
   const navigate = useNavigate();
@@ -8,7 +10,7 @@ export default function ConsentScreen() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
 
-  /** @param {import("react").FormEvent<HTMLFormElement>} e */
+  /** @param {React.FormEvent<HTMLFormElement>} e */
   async function onContinue(e) {
     e.preventDefault();
     if (!consented || !name.trim()) {
@@ -21,37 +23,57 @@ export default function ConsentScreen() {
   }
 
   return (
-    <div className="container-main">
-      <form className="card" onSubmit={onContinue}>
-        <h1 className="mb-2 text-2xl font-semibold">Consent</h1>
-        <p className="mb-4 text-sm text-slate-700">
-          You are invited to participate in a decision-making study involving prediction-market
-          trading decisions.
-        </p>
-        <p className="mb-4 text-sm text-slate-700">
-          Tournament incentives: final top-3 participants by total tokens receive prizes (€5, €3,
-          €2). Prize payment is processed manually after session closure.
-        </p>
-        <label className="mb-2 block text-sm">Full name</label>
-        <input
-          className="mb-4 w-full rounded border border-slate-300 px-3 py-2"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <label className="mb-4 flex items-start gap-2 text-sm">
+    <FlowShell step={1} total={5} title="Participant Consent">
+      <form onSubmit={onContinue} className="space-y-6">
+        <div
+          className="border border-border bg-card/50 px-5 py-4 space-y-3 text-sm leading-relaxed text-foreground/80"
+          style={{ fontFamily: "Spectral, Georgia, serif" }}
+        >
+          <p>You are invited to participate in a decision-making study involving prediction-market trading decisions conducted for academic research purposes.</p>
+          <p>Your participation is voluntary. All responses will be anonymised. Session data is stored securely and used solely for research analysis.</p>
+          <p>The session will last approximately 60–90 minutes. You may withdraw at any time without penalty.</p>
+          <p>Tournament incentives: final top-3 participants by total tokens receive prizes (€5, €3, €2). Prize payment is processed manually after session closure.</p>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-2">
+            Full name
+          </label>
           <input
-            type="checkbox"
-            className="mt-1"
-            checked={consented}
-            onChange={(e) => setConsented(e.target.checked)}
+            value={name}
+            onChange={(e) => { setName(e.target.value); setError(""); }}
+            placeholder="As it appears on your ID"
+            className="w-full bg-transparent border-b border-border px-0 py-2 text-sm font-mono focus:outline-none focus:border-foreground/60 placeholder:text-muted-foreground/50 transition-colors"
           />
-          I consent to participate and understand this study is for research purposes.
+        </div>
+
+        <label className="flex items-start gap-3 cursor-pointer group">
+          <div
+            onClick={() => { setConsented((c) => !c); setError(""); }}
+            className={`mt-0.5 w-4 h-4 border flex items-center justify-center shrink-0 transition-colors ${
+              consented ? "border-foreground bg-foreground" : "border-border group-hover:border-foreground/50"
+            }`}
+          >
+            {consented && <CheckCircle className="w-3 h-3 text-background" />}
+          </div>
+          <span className="text-sm text-foreground/80 leading-snug">
+            I have read the study description above, I understand my participation is voluntary, and I consent to participate in this research session.
+          </span>
         </label>
-        <button type="submit" className="btn-primary">
-          Continue to Instructions
+
+        {error && (
+          <p className="text-xs font-mono text-red-500 flex items-center gap-1.5">
+            <AlertTriangle className="w-3 h-3" /> {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          className="w-full py-3.5 bg-foreground text-background text-xs font-mono uppercase tracking-[0.2em] hover:opacity-90 transition-opacity"
+        >
+          I Consent — Continue to Instructions
         </button>
-        {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
       </form>
-    </div>
+    </FlowShell>
   );
 }

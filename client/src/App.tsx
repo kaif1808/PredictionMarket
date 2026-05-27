@@ -27,31 +27,58 @@ function Home() {
   }
 
   return (
-    <div className="container-main">
-      <h1 className="mb-2 text-3xl font-semibold">Valdoria Prediction Market</h1>
-      <p className="mb-6 text-slate-600">Enter your join token or open the admin console.</p>
-      <div className="grid gap-4 md:grid-cols-2">
-        <form className="card" onSubmit={joinSession}>
-          <h2 className="mb-3 text-lg font-medium">Participant Access</h2>
-          <label className="mb-2 block text-sm text-slate-700">Join token</label>
-          <input
-            className="mb-3 w-full rounded border border-slate-300 px-3 py-2"
-            value={joinToken}
-            onChange={(e) => setJoinToken(e.target.value)}
-            placeholder="e.g. 42:P01"
-          />
-          <button type="submit" className="btn-primary">
-            Join Session
-          </button>
-          {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
-        </form>
-        <div className="card">
-          <h2 className="mb-3 text-lg font-medium">Admin Access</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Use HTTP basic credentials configured on the server.
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-20">
+      {/* Wordmark */}
+      <div className="mb-14 text-center">
+        <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-muted-foreground/40 mb-5">
+          Experimental Economics · Prediction Markets
+        </p>
+        <h1
+          className="text-5xl font-light tracking-tight leading-[1.1] mb-4"
+          style={{ fontFamily: "Spectral, Georgia, serif" }}
+        >
+          Valdoria
+          <span className="text-muted-foreground/40 mx-3 font-extralight">·</span>
+          Prediction Market
+        </h1>
+        <div className="w-12 h-px bg-border mx-auto" />
+      </div>
+
+      <div className="w-full max-w-md space-y-3">
+        <form onSubmit={joinSession} className="border border-border bg-card/60 p-6">
+          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground/50 mb-5">
+            Participant Access
           </p>
-          <Link className="btn-secondary" to="/admin">
-            Open Admin Panel
+          <label className="block text-xs font-mono text-muted-foreground/70 mb-2 tracking-wide">
+            Join token
+          </label>
+          <input
+            value={joinToken}
+            onChange={(e) => { setJoinToken(e.target.value); setError(""); }}
+            placeholder="e.g. 42:P01"
+            className="w-full bg-transparent border-b border-border px-0 py-2 text-sm font-mono mb-6 focus:outline-none focus:border-foreground/50 placeholder:text-muted-foreground/25 transition-colors"
+          />
+          <button
+            type="submit"
+            className="w-full py-3 bg-foreground text-background text-xs font-mono uppercase tracking-[0.15em] hover:opacity-90 transition-opacity"
+          >
+            Enter Session
+          </button>
+          {error && <p className="mt-3 text-xs text-red-400 font-mono">{error}</p>}
+        </form>
+
+        <div className="border border-border/50 bg-card/30 px-6 py-4 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground/40 mb-0.5">
+              Experimenter Access
+            </p>
+            <p className="text-xs font-mono text-muted-foreground/50">Admin console via HTTP basic auth</p>
+          </div>
+          <Link
+            to="/admin"
+            className="text-[10px] font-mono uppercase tracking-[0.15em] text-muted-foreground hover:text-foreground transition-colors border border-border px-3 py-1.5"
+          >
+            Admin →
           </Link>
         </div>
       </div>
