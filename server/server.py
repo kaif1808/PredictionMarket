@@ -42,12 +42,10 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 logger = logging.getLogger("valdoria")
 
 fastapi_app = FastAPI(title="Valdoria Prediction Market")
-socketio_cors: str | list[str]
-if "*" in settings.allowed_origins:
-    socketio_cors = "*"
-else:
-    socketio_cors = settings.allowed_origins
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=socketio_cors)
+# Keep FastAPI CORS strict, but disable Engine.IO origin enforcement because
+# proxy/TLS termination (e.g. Heroku) can produce mismatched Origin/Host checks
+# and reject valid same-site websocket upgrades with 403.
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=[])
 combined_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=fastapi_app)
 security = HTTPBasic()
 orchestrator = Orchestrator(
@@ -105,7 +103,7 @@ class JoinRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     label: str
     rotation_id: int = 1
-    subject_count: int = Field(default=16, ge=8, le=20)
+    subject_count: int = Field(default=16, ge=1, le=20)
 
 
 class StartMarketRequest(BaseModel):
@@ -1021,6 +1019,10 @@ def tournament_final(valdoria_auth: str | None = Cookie(default=None), db: Sessi
 
 @sio.event
 async def connect(sid: str, environ: dict[str, Any], auth: Any) -> bool:
+    origin = environ.get("HTTP_ORIGIN")
+    host = environ.get("HTTP_HOST")
+    forwarded_proto = environ.get("HTTP_X_FORWARDED_PROTO")
+    query_string = environ.get("QUERY_STRING")
     cookie_header = environ.get("HTTP_COOKIE", "")
     cookie_map: dict[str, str] = {}
     for part in cookie_header.split(";"):
@@ -1028,9 +1030,25 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any) -> bool:
             key, value = part.strip().split("=", 1)
             cookie_map[key] = value
     cookie_value = cookie_map.get("valdoria_auth")
+    logger.info(
+        "Socket connect attempt sid=%s origin=%s host=%s x_forwarded_proto=%s has_auth_cookie=%s query=%s",
+        sid,
+        origin,
+        host,
+        forwarded_proto,
+        bool(cookie_value),
+        query_string,
+    )
     try:
         session_id, participant_id = _parse_auth_cookie(cookie_value)
     except HTTPException:
+        logger.warning(
+            "Socket connect rejected sid=%s reason=invalid_or_missing_cookie origin=%s host=%s x_forwarded_proto=%s",
+            sid,
+            origin,
+            host,
+            forwarded_proto,
+        )
         return False
 
     await sio.save_session(sid, {"session_id": session_id, "participant_id": participant_id})
@@ -1039,6 +1057,7 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any) -> bool:
     with SessionLocal() as db:
         state_payload = _build_participant_state(db=db, session_id=session_id, participant_id=participant_id)
     await sio.emit("state_sync", state_payload, room=sid)
+    logger.info("Socket connect accepted sid=%s session_id=%s participant_id=%s", sid, session_id, participant_id)
     return True
 
 
