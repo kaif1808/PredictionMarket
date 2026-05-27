@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "description": "Root package file to trigger Heroku Node.js buildpack",
   "scripts": {
-    "build": "cd client && npm install && npm run build"
+    "build": "cd client && npm install --include=dev && npm run build"
   }
 }
