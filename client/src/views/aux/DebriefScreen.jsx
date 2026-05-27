@@ -1,17 +1,12 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../../lib/api";
-
-/**
- * @typedef {object} TournamentFinal
- * @property {number} rank
- * @property {number} total_tokens
- * @property {number} prize_eur
- */
+import { SectionLabel } from "../../components/SectionLabel";
+import { Award, CheckCircle } from "lucide-react";
 
 export default function DebriefScreen() {
   const [strategy, setStrategy] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [tournament, setTournament] = useState(/** @type {TournamentFinal | null} */ (null));
+  const [tournament, setTournament] = useState(/** @type {{ rank: number; total_tokens: number; prize_eur: number } | null} */ (null));
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -31,32 +26,88 @@ export default function DebriefScreen() {
   }
 
   return (
-    <div className="container-main">
-      <div className="card">
-        <h1 className="mb-2 text-2xl font-semibold">Debrief</h1>
-        <p className="mb-4 text-sm text-slate-700">Share your strategy and feedback.</p>
-        <textarea
-          className="mb-3 h-28 w-full rounded border border-slate-300 p-2"
-          placeholder="How did you make trading decisions?"
-          value={strategy}
-          onChange={(e) => setStrategy(e.target.value)}
-        />
-        <button className="btn-primary" onClick={submit}>
-          Submit Debrief
-        </button>
-        {submitted ? <p className="mt-3 text-sm text-green-700">Debrief submitted.</p> : null}
-        {error ? <p className="mt-3 text-sm text-red-700">{error}</p> : null}
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-16">
+      <div className="w-full max-w-xl space-y-8">
+        {/* Header */}
+        <div className="text-center">
+          <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-muted-foreground mb-3">
+            Session Complete
+          </p>
+          <h1 className="text-3xl font-light" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+            Session Debrief
+          </h1>
+          <div className="w-8 h-px bg-border mx-auto mt-4" />
+        </div>
 
+        {/* Tournament result */}
         {tournament ? (
-          <div className="mt-6 rounded border border-cyan-200 bg-cyan-50 p-3 text-sm">
-            <p className="font-medium">Final tournament result</p>
-            <p>Rank: {tournament.rank}</p>
-            <p>Total tokens: {tournament.total_tokens}</p>
-            <p>Prize: €{tournament.prize_eur}</p>
+          <div>
+            <SectionLabel>Your Tournament Result</SectionLabel>
+            <div className="border border-border overflow-hidden">
+              <div className="grid grid-cols-[2rem_1fr_1fr_1fr] border-b border-border bg-card/60">
+                {["Rank", "Tokens", "Prize", ""].map((h, i) => (
+                  <div key={i} className="px-4 py-2 text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground border-r border-border last:border-r-0">
+                    {h}
+                  </div>
+                ))}
+              </div>
+              <div className={`grid grid-cols-[2rem_1fr_1fr_1fr] ${tournament.rank <= 3 ? "bg-amber-500/5" : ""}`}>
+                <div className="px-4 py-3 text-[11px] font-mono tabular-nums text-muted-foreground border-r border-border flex items-center gap-1.5">
+                  {tournament.rank <= 3 ? (
+                    <Award className={`w-3 h-3 ${tournament.rank === 1 ? "text-amber-400" : tournament.rank === 2 ? "text-slate-400" : "text-amber-700"}`} />
+                  ) : tournament.rank}
+                </div>
+                <div className="px-4 py-3 text-[11px] font-mono tabular-nums text-foreground border-r border-border">
+                  {Number(tournament.total_tokens).toFixed(1)} T
+                </div>
+                <div className={`px-4 py-3 text-[11px] font-mono tabular-nums border-r border-border ${tournament.prize_eur > 0 ? "text-green-500" : "text-muted-foreground"}`}>
+                  {tournament.prize_eur > 0 ? `€${Number(tournament.prize_eur).toFixed(2)}` : "—"}
+                </div>
+                <div className="px-4 py-3 text-[11px] font-mono text-muted-foreground">
+                  Rank {tournament.rank}
+                </div>
+              </div>
+            </div>
           </div>
         ) : (
-          <p className="mt-6 text-sm text-slate-600">Tournament ranking will appear after session closure.</p>
+          <p className="text-sm font-mono text-muted-foreground">
+            Tournament ranking will appear after session closure.
+          </p>
         )}
+
+        {/* Strategy feedback */}
+        <div>
+          <SectionLabel>Strategy & Feedback</SectionLabel>
+          {submitted ? (
+            <div className="border border-green-500/25 bg-green-500/5 px-5 py-4 flex items-center gap-3">
+              <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+              <p className="text-sm font-mono text-green-400">Debrief submitted. Thank you for participating.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <textarea
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value)}
+                placeholder="Describe how you made trading decisions — what information did you rely on, what signals guided your choices?"
+                className="w-full h-32 bg-transparent border border-border px-4 py-3 text-sm text-foreground/85 placeholder:text-muted-foreground/50 focus:outline-none focus:border-foreground/50 resize-none transition-colors"
+                style={{ fontFamily: "Spectral, Georgia, serif" }}
+              />
+              <button
+                onClick={submit}
+                className="w-full py-3.5 bg-foreground text-background text-xs font-mono uppercase tracking-[0.2em] hover:opacity-90 transition-opacity"
+              >
+                Submit Debrief
+              </button>
+              {error && (
+                <p className="text-xs font-mono text-red-500">{error}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <p className="text-center text-[10px] font-mono text-muted-foreground">
+          You may close this window. Payment will be arranged by the experimenter.
+        </p>
       </div>
     </div>
   );

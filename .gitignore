@@ -9,3 +9,4 @@ dist/
 prediction_market.db
 analysis/output/
 tmp_*.db
+figma_design
