@@ -180,6 +180,22 @@ export default function AdminPanel() {
     setMessage(`Emergency action completed: ${kind}`);
   }
 
+  async function verifyLogin() {
+    try {
+      await loadSessions();
+      await loadParticipants();
+      await loadTournament();
+      await loadDashboard();
+      setMessage("Admin credentials verified.");
+    } catch (err) {
+      setSessions([]);
+      setParticipants([]);
+      setTournamentRows([]);
+      setDashboard(null);
+      setMessage(err instanceof Error ? err.message : "Invalid admin credentials");
+    }
+  }
+
   const selected = useMemo(
     () => sessions.find((s) => s.session_id === selectedSession) || null,
     [sessions, selectedSession]
@@ -227,8 +243,20 @@ export default function AdminPanel() {
               type="password"
               value={auth.pass}
               onChange={(e) => setAuth((a) => ({ ...a, pass: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  verifyLogin().catch(() => {});
+                }
+              }}
               placeholder="pass"
             />
+            <button
+              onClick={() => verifyLogin().catch(() => {})}
+              className="px-3 py-1 border border-border text-[10px] font-mono uppercase tracking-[0.12em] text-foreground hover:bg-foreground/5 transition-colors"
+            >
+              Verify Login
+            </button>
           </div>
         </div>
       </header>
