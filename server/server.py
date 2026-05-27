@@ -67,6 +67,18 @@ fastapi_app.add_middleware(
 
 client_dist = Path(__file__).resolve().parents[1] / "client" / "dist"
 
+SPA_ROOT_ROUTES = (
+    "/",
+    "/consent",
+    "/instructions",
+    "/quiz",
+    "/risk",
+    "/lobby",
+    "/trade",
+    "/debrief",
+    "/admin",
+)
+
 @fastapi_app.get("/app/")
 async def serve_app_root():
     return FileResponse(client_dist / "index.html")
@@ -77,6 +89,13 @@ async def serve_app(path: str):
     if file_path.exists() and file_path.is_file():
         return FileResponse(file_path)
     return FileResponse(client_dist / "index.html")
+
+async def serve_spa_root_routes():
+    return FileResponse(client_dist / "index.html")
+
+
+for _route in SPA_ROOT_ROUTES:
+    fastapi_app.add_api_route(_route, serve_spa_root_routes, methods=["GET"], include_in_schema=False)
 
 
 class JoinRequest(BaseModel):
