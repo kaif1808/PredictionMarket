@@ -68,7 +68,6 @@ export default function TradingView() {
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  // TODO: verify backend sell support before enabling sell mode
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 
@@ -181,7 +180,7 @@ export default function TradingView() {
     setSubmitting(true);
     setError("");
     try {
-      const res = (await apiPost("/trade", { direction, quantity: Number(quantity) })) as {
+      const res = (await apiPost("/trade", { side: mode, direction, quantity: Number(quantity) })) as {
         balance_after: number;
         yes_held: number;
         no_held: number;

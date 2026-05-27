@@ -81,5 +81,6 @@ class ErrorEvent(BaseModel):
 
 
 class TradeRequest(BaseModel):
+    side: Literal["buy", "sell"] = "buy"
     direction: Literal["yes", "no"]
     quantity: int = Field(ge=1, le=20)

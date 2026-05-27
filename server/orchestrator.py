@@ -246,8 +246,13 @@ class Orchestrator:
             if role_row is None:
                 raise ValueError("unknown participant")
 
-            d_yes = float(trade.quantity if trade.direction == "yes" else 0)
-            d_no = float(trade.quantity if trade.direction == "no" else 0)
+            side_sign = 1.0 if trade.side == "buy" else -1.0
+            d_yes = float(trade.quantity * side_sign if trade.direction == "yes" else 0)
+            d_no = float(trade.quantity * side_sign if trade.direction == "no" else 0)
+            if trade.side == "sell":
+                held = float(role_row.yes_held) if trade.direction == "yes" else float(role_row.no_held)
+                if float(trade.quantity) > held:
+                    raise ValueError("SHORT_SELL_NOT_ALLOWED")
             price_before = lmsr.price(float(market.q_yes), float(market.q_no), float(market.b_parameter))
             delta_cost = lmsr.cost(float(market.q_yes), float(market.q_no), d_yes, d_no, float(market.b_parameter))
             if delta_cost > float(role_row.starting_balance):

@@ -851,6 +851,8 @@ async def trade(payload: TradeRequest, valdoria_auth: str | None = Cookie(defaul
         message = "Trade rejected"
         if code == "INSUFFICIENT_FUNDS":
             message = "Insufficient balance for this trade."
+        if code == "SHORT_SELL_NOT_ALLOWED":
+            message = "Short selling is not allowed."
         if code == "ROUND_CLOSED":
             message = "Trading is currently closed."
         await sio.emit("error", ErrorEvent(code=code, message=message).model_dump(), room=_room_participant(session_id, participant_id))
