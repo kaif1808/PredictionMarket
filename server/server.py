@@ -379,7 +379,10 @@ async def start_market(session_id: int, payload: StartMarketRequest, _: str = De
 
 @fastapi_app.post("/admin/sessions/{session_id}/rounds")
 async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
-    round_row = orchestrator.start_round(session_id=session_id, round_number=payload.round_number)
+    try:
+        round_row = orchestrator.start_round(session_id=session_id, round_number=payload.round_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     market = db.get(Market, round_row.market_id)
     if market is None:
         raise HTTPException(status_code=500, detail="market missing")

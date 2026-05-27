@@ -39,8 +39,24 @@ def _parse_bool(value: str | None, default: bool) -> bool:
 def _parse_allowed_origins(value: str | None) -> list[str]:
     if value is None or not value.strip():
         return ["http://127.0.0.1:5173", "http://localhost:5173"]
-    origins = [part.strip() for part in value.split(",") if part.strip()]
-    return origins or ["http://127.0.0.1:5173", "http://localhost:5173"]
+    origins: list[str] = []
+    for part in value.split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        if entry == "*":
+            origins.append("*")
+            continue
+        if "://" not in entry:
+            origins.extend([f"https://{entry}", f"http://{entry}"])
+            continue
+        origins.append(entry)
+        if entry.startswith("https://"):
+            origins.append(f"http://{entry[len('https://'):]}")
+        elif entry.startswith("http://"):
+            origins.append(f"https://{entry[len('http://'):]}")
+    deduped = list(dict.fromkeys(origins))
+    return deduped or ["http://127.0.0.1:5173", "http://localhost:5173"]
 
 
 def _parse_tie_break_mode(value: str | None) -> str:

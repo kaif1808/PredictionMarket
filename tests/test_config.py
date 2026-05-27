@@ -7,8 +7,22 @@ def test_load_settings_parses_allowed_origins_and_cookie_secure(monkeypatch) -> 
     monkeypatch.setenv("ALLOWED_ORIGINS", "https://a.example, https://b.example")
     monkeypatch.setenv("COOKIE_SECURE", "true")
     s = load_settings()
-    assert s.allowed_origins == ["https://a.example", "https://b.example"]
+    assert s.allowed_origins == [
+        "https://a.example",
+        "http://a.example",
+        "https://b.example",
+        "http://b.example",
+    ]
     assert s.cookie_secure is True
+
+
+def test_load_settings_parses_host_only_allowed_origins(monkeypatch) -> None:
+    monkeypatch.setenv("ALLOWED_ORIGINS", "predictionmarket-1c97c5cc79dd.herokuapp.com")
+    s = load_settings()
+    assert s.allowed_origins == [
+        "https://predictionmarket-1c97c5cc79dd.herokuapp.com",
+        "http://predictionmarket-1c97c5cc79dd.herokuapp.com",
+    ]
 
 
 def test_load_settings_defaults(monkeypatch) -> None:

@@ -103,3 +103,22 @@ def test_session_happy_path_smoke() -> None:
 
     debrief = client.post("/debrief/submit", json={"answers": {"strategy": "trend following"}})
     assert debrief.status_code == 200
+
+
+def test_start_round_invalid_phase_returns_400() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "invalid-phase", "rotation_id": 1, "subject_count": 8},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+    start_round = client.post(
+        f"/admin/sessions/{session_id}/rounds",
+        auth=auth,
+        json={"round_number": 1},
+    )
+    assert start_round.status_code == 400
+    assert start_round.json()["detail"] == "Cannot start round from current phase"
