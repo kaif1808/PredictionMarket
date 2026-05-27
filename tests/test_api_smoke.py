@@ -47,6 +47,9 @@ def test_session_happy_path_smoke() -> None:
 
     join = client.post("/auth/join", json={"join_token": token})
     assert join.status_code == 200
+    set_cookie = join.headers.get("set-cookie", "")
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie or "samesite=lax" in set_cookie.lower()
     reused = client.post("/auth/join", json={"join_token": token})
     assert reused.status_code == 404
 

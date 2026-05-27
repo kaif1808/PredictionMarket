@@ -1,16 +1,17 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { apiGet } from "../lib/api";
+import type { ParticipantState } from "../types/events";
 
 export default function LobbyScreen() {
   const navigate = useNavigate();
-  const [state, setState] = useState(null);
+  const [state, setState] = useState<ParticipantState | null>(null);
 
   useEffect(() => {
     let active = true;
     async function refresh() {
       try {
-        const s = await apiGet("/state");
+        const s = (await apiGet("/state")) as ParticipantState;
         if (!active) return;
         setState(s);
         if (s.phase === "round_open" || s.phase === "market_open") {

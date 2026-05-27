@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../../lib/api";
 
+/**
+ * @typedef {object} TournamentFinal
+ * @property {number} rank
+ * @property {number} total_tokens
+ * @property {number} prize_eur
+ */
+
 export default function DebriefScreen() {
   const [strategy, setStrategy] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [tournament, setTournament] = useState(null);
+  const [tournament, setTournament] = useState(/** @type {TournamentFinal | null} */ (null));
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -19,7 +26,7 @@ export default function DebriefScreen() {
       setSubmitted(true);
       setError("");
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : "Failed to submit debrief");
     }
   }
 

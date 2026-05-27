@@ -15,14 +15,14 @@ function Home() {
   const [joinToken, setJoinToken] = useState("");
   const [error, setError] = useState("");
 
-  async function joinSession(e) {
+  async function joinSession(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
     try {
       await apiPost("/auth/join", { join_token: joinToken });
       navigate("/consent");
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : "Join failed");
     }
   }
 

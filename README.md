@@ -35,6 +35,15 @@ uvicorn server.server:combined_app --reload --port 8000
 # open http://127.0.0.1:8000/app
 ```
 
+## Runtime configuration highlights
+
+- `ALLOWED_ORIGINS` controls CORS and Socket.io allowed origins.
+- `COOKIE_SECURE=true` should be set in HTTPS deployments.
+- `TOURNAMENT_TIE_BREAK_MODE=shared_prize|random` controls tie handling at session close.
+  - `shared_prize` (default): tied participants receive the higher rank prize; next rank is skipped.
+  - `random`: ties are broken with a deterministic seed and logged to `admin_actions`.
+- `LMSR_B_PARAMETER` controls the LMSR liquidity parameter `b` and is applied uniformly across all 4 markets in a session (default `18.0`).
+
 ## Current scope implemented
 
 **Core infrastructure & runtime semantics:**
@@ -94,6 +103,41 @@ uvicorn server.server:combined_app --reload --port 8000
 pytest
 ```
 
+Frontend socket-contract typecheck:
+
+```bash
+cd client
+npm run typecheck
+```
+
+Deployment-readiness checks:
+
+```bash
+python3 scripts/deployment_readiness_check.py
+# production-style env validation:
+python3 scripts/deployment_readiness_check.py --strict-env
+```
+
+Single-command prelaunch evidence artifact:
+
+```bash
+python3 scripts/prelaunch_evidence.py \
+  --spawn-local \
+  --sessions 2 \
+  --subject-count 16 \
+  --trades-per-participant 1 \
+  --require-state-sync-ratio 1.0 \
+  --require-price-update-ratio 1.0 \
+  --max-trade-p99-ms 250 \
+  --max-state-sync-p99-ms 500 \
+  --reconnect-latency-budget-ms 5000 \
+  --output results/prelaunch_evidence.json
+```
+
+Notes:
+- `--spawn-local` includes a managed restart-resume probe (mid-round restart, reconnect, resume trading, no double-count check).
+- `--base-url` mode cannot restart an externally-managed server; restart-resume is reported as skipped.
+
 ## Calibration tooling
 
 ```bash
@@ -105,7 +149,23 @@ python3 calibration/simulate_market.py --num-traders 16 --rounds 5 --b 18 --true
 If backend is running locally:
 
 ```bash
-python3 calibration/ui_smoketest.py --base-url http://127.0.0.1:8000 --admin-user admin --admin-pass admin
+python3 calibration/ui_smoketest.py --base-url http://127.0.0.1:8000 --admin-user admin --admin-pass admin --sessions 2 --subject-count 16 --trades-per-participant 1
+```
+
+Thresholded load evidence run (recommended before live sessions):
+
+```bash
+python3 calibration/ui_smoketest.py \
+  --base-url http://127.0.0.1:8000 \
+  --admin-user admin \
+  --admin-pass admin \
+  --sessions 2 \
+  --subject-count 16 \
+  --trades-per-participant 1 \
+  --require-state-sync-ratio 1.0 \
+  --require-price-update-ratio 1.0 \
+  --max-trade-p99-ms 250 \
+  --max-state-sync-p99-ms 500
 ```
 
 ## Analysis exports

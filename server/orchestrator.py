@@ -12,7 +12,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from server import bayesian, lmsr
-from server.db_models import Market, MarketResolution, MarketRole, Participant, ParticipantSession, Round, SessionModel, Signal, TournamentRanking, Trade
+from server.db_models import AdminAction, Market, MarketResolution, MarketRole, Participant, ParticipantSession, Round, SessionModel, Signal, TournamentRanking, Trade
 from server.events import TradeRequest
 from server.roles import MarketAssignment, get_assignment, get_market_config
 
@@ -51,9 +51,20 @@ class TradeResult:
 
 
 class Orchestrator:
-    def __init__(self, db_session_factory: sessionmaker[Session]):
+    def __init__(
+        self,
+        db_session_factory: sessionmaker[Session],
+        tournament_tie_break_mode: str = "shared_prize",
+        lmsr_b_parameter: float = 18.0,
+    ):
         self.db_session_factory = db_session_factory
         self.sessions: dict[int, SessionState] = {}
+        if tournament_tie_break_mode not in {"shared_prize", "random"}:
+            raise ValueError("tournament_tie_break_mode must be 'shared_prize' or 'random'")
+        self.tournament_tie_break_mode = tournament_tie_break_mode
+        if lmsr_b_parameter <= 0:
+            raise ValueError("lmsr_b_parameter must be > 0")
+        self.lmsr_b_parameter = lmsr_b_parameter
 
     def _require_state(self, session_id: int) -> SessionState:
         if session_id not in self.sessions:
@@ -101,7 +112,11 @@ class Orchestrator:
             if session_row is None:
                 raise ValueError("Session not found")
 
-            market_cfg = get_market_config(session_row.rotation_id, market_number)
+            market_cfg = get_market_config(
+                session_row.rotation_id,
+                market_number,
+                lmsr_b_parameter=self.lmsr_b_parameter,
+            )
             market = Market(
                 session_id=session_id,
                 market_number=market_number,
@@ -371,30 +386,60 @@ class Orchestrator:
                 while j < len(scored) and abs(scored[j][1] - scored[i][1]) < 1e-9:
                     tied.append(scored[j])
                     j += 1
-                prize = 0.0
-                if rank == 1:
-                    prize = 5.0
-                elif rank == 2:
-                    prize = 3.0
-                elif rank == 3:
-                    prize = 2.0
-                for pid, total, _ in tied:
+
+                if len(tied) > 1 and self.tournament_tie_break_mode == "random":
+                    seed = hashlib.sha256(f"{session_id}:tiebreak:{rank}:{i}".encode("utf-8")).hexdigest()[:16]
+                    rng = random.Random(seed)
+                    rng.shuffle(tied)
                     db.add(
-                        TournamentRanking(
+                        AdminAction(
                             session_id=session_id,
-                            participant_id=pid,
-                            total_tokens=Decimal(str(total)),
-                            rank=rank,
-                            prize_eur=Decimal(str(prize)),
+                            action_type="tournament_tiebreak_random",
+                            reason=f"seed={seed};rank={rank};participants={','.join(pid for pid, _, _ in tied)}",
                         )
                     )
-                rank += len(tied)
+                    for offset, (pid, total, _) in enumerate(tied):
+                        rank_for_participant = rank + offset
+                        db.add(
+                            TournamentRanking(
+                                session_id=session_id,
+                                participant_id=pid,
+                                total_tokens=Decimal(str(total)),
+                                rank=rank_for_participant,
+                                prize_eur=Decimal(str(self._prize_for_rank(rank_for_participant))),
+                            )
+                        )
+                    rank += len(tied)
+                else:
+                    # Default bible behavior: shared-prize at tied rank and skip subsequent ranks.
+                    prize = self._prize_for_rank(rank)
+                    for pid, total, _ in tied:
+                        db.add(
+                            TournamentRanking(
+                                session_id=session_id,
+                                participant_id=pid,
+                                total_tokens=Decimal(str(total)),
+                                rank=rank,
+                                prize_eur=Decimal(str(prize)),
+                            )
+                        )
+                    rank += len(tied)
                 i = j
 
             db.commit()
             return db.scalars(
                 select(TournamentRanking).where(TournamentRanking.session_id == session_id).order_by(TournamentRanking.rank)
             ).all()
+
+    @staticmethod
+    def _prize_for_rank(rank: int) -> float:
+        if rank == 1:
+            return 5.0
+        if rank == 2:
+            return 3.0
+        if rank == 3:
+            return 2.0
+        return 0.0
 
     def restore_from_db(self) -> None:
         with self.db_session_factory() as db:

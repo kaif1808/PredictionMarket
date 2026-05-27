@@ -19,6 +19,49 @@ class Settings:
     admin_user: str
     admin_pass: str
     log_level: str
+    allowed_origins: list[str]
+    cookie_secure: bool
+    tournament_tie_break_mode: str
+    lmsr_b_parameter: float
+
+
+def _parse_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    v = value.strip().lower()
+    if v in {"1", "true", "yes", "on"}:
+        return True
+    if v in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _parse_allowed_origins(value: str | None) -> list[str]:
+    if value is None or not value.strip():
+        return ["http://127.0.0.1:5173", "http://localhost:5173"]
+    origins = [part.strip() for part in value.split(",") if part.strip()]
+    return origins or ["http://127.0.0.1:5173", "http://localhost:5173"]
+
+
+def _parse_tie_break_mode(value: str | None) -> str:
+    if value is None:
+        return "shared_prize"
+    mode = value.strip().lower()
+    if mode in {"shared_prize", "random"}:
+        return mode
+    return "shared_prize"
+
+
+def _parse_positive_float(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        parsed = float(value.strip())
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
 
 
 def load_settings() -> Settings:
@@ -31,5 +74,8 @@ def load_settings() -> Settings:
         admin_user=os.getenv("ADMIN_USER", "admin"),
         admin_pass=os.getenv("ADMIN_PASS", "admin"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        allowed_origins=_parse_allowed_origins(os.getenv("ALLOWED_ORIGINS")),
+        cookie_secure=_parse_bool(os.getenv("COOKIE_SECURE"), default=False),
+        tournament_tie_break_mode=_parse_tie_break_mode(os.getenv("TOURNAMENT_TIE_BREAK_MODE")),
+        lmsr_b_parameter=_parse_positive_float(os.getenv("LMSR_B_PARAMETER"), default=18.0),
     )
-

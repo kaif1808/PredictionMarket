@@ -42,3 +42,51 @@ export interface MarketResolvedEvent extends MarketOutcomePublicEvent {
   final_balance: number;
   pnl: number;
 }
+
+export interface RoundEndedEvent {
+  round_number: number;
+  closing_price: number;
+  round_volume: number;
+}
+
+export interface ErrorEvent {
+  code: string;
+  message: string;
+}
+
+export interface ParticipantState {
+  session_id: number;
+  participant_id: string;
+  flow_step: string | null;
+  phase: string;
+  current_market_number: number | null;
+  current_round_number: number | null;
+  role_tier: RoleTier | null;
+  balance: number | null;
+  yes_held: number | null;
+  no_held: number | null;
+  current_price: number;
+  bulletin: BulletinPayload | null;
+  posterior: number | null;
+}
+
+export interface ServerToClientEvents {
+  state_sync: (payload: ParticipantState) => void;
+  market_started: (payload: {
+    market_number: number;
+    stage: number;
+    scenario_description: string;
+    role_tier: RoleTier;
+    endowment_tokens: number;
+    starting_balance: number;
+    current_price: number;
+    max_rounds: number;
+  }) => void;
+  round_started: (payload: RoundStartedEvent) => void;
+  price_update: (payload: PriceUpdateEvent) => void;
+  round_ended: (payload: RoundEndedEvent) => void;
+  market_outcome_public: (payload: MarketOutcomePublicEvent) => void;
+  market_resolved: (payload: MarketResolvedEvent) => void;
+  session_closed: (payload: { session_id: number }) => void;
+  error: (payload: ErrorEvent) => void;
+}

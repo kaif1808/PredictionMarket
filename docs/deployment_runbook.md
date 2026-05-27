@@ -8,6 +8,7 @@ Run from repository root:
 pytest
 cd client && npm run build && cd ..
 alembic upgrade head
+python3 scripts/deployment_readiness_check.py --strict-env
 ```
 
 Expected:
@@ -24,6 +25,9 @@ Set these on the target environment:
 - `ADMIN_USER`
 - `ADMIN_PASS`
 - `ALLOWED_ORIGINS`
+- `COOKIE_SECURE`
+- `TOURNAMENT_TIE_BREAK_MODE` (`shared_prize` default, optional `random`)
+- `LMSR_B_PARAMETER` (single shared LMSR `b` across all stages; default `18.0`)
 - `PYTHON_VERSION`
 - `LOG_LEVEL`
 
@@ -60,6 +64,33 @@ Before pilot:
 ```bash
 python3 calibration/signal_validator.py --samples 10000 --theta 0.85 --true-outcome 1
 python3 calibration/b_sweep.py --b-values 10,15,18,20,25 --runs 100 --true-probability 0.65
+# with backend running locally or on staging:
+python3 calibration/ui_smoketest.py \
+  --base-url http://127.0.0.1:8000 \
+  --admin-user admin \
+  --admin-pass admin \
+  --sessions 2 \
+  --subject-count 16 \
+  --trades-per-participant 1 \
+  --require-state-sync-ratio 1.0 \
+  --require-price-update-ratio 1.0 \
+  --max-trade-p99-ms 250 \
+  --max-state-sync-p99-ms 500
+# optional one-command evidence artifact for record-keeping:
+python3 scripts/prelaunch_evidence.py \
+  --base-url http://127.0.0.1:8000 \
+  --admin-user admin \
+  --admin-pass admin \
+  --sessions 2 \
+  --subject-count 16 \
+  --trades-per-participant 1 \
+  --require-state-sync-ratio 1.0 \
+  --require-price-update-ratio 1.0 \
+  --max-trade-p99-ms 250 \
+  --max-state-sync-p99-ms 500 \
+  --reconnect-latency-budget-ms 5000 \
+  --output results/prelaunch_evidence.json
+# to include managed mid-round restart/resume verification, run with --spawn-local instead of --base-url
 ```
 
 After pilot session:

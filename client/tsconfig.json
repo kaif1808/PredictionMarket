@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/App.tsx",
+    "src/lib/api.js",
+    "src/lib/socket.js",
+    "src/views/AdminPanel.tsx",
+    "src/views/LobbyScreen.tsx",
+    "src/views/TradingView.tsx",
+    "src/types/events.ts"
+  ]
+}

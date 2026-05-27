@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -33,8 +34,18 @@ def _rotated_position(rotation_id: int, participant_id: str, subject_count: int 
     return (idx + max(rotation_id - 1, 0)) % max(subject_count, 1)
 
 
+def _semi_count_for_subjects(subject_count: int) -> int:
+    # Ensure full participant coverage across markets 2 and 4:
+    # each participant must receive at least one informed role tier.
+    informed_slots = math.ceil(subject_count / 2)
+    semi = max(informed_slots - 2, 2)
+    return semi
+
+
 def get_assignment(session_rotation_id: int, participant_id: str, market_number: int, subject_count: int = 16) -> MarketAssignment:
     pos = _rotated_position(session_rotation_id, participant_id, subject_count)
+    semi_count = _semi_count_for_subjects(subject_count)
+    info_slots = 2 + semi_count
 
     if market_number == 1:
         return MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
@@ -42,7 +53,7 @@ def get_assignment(session_rotation_id: int, participant_id: str, market_number:
     if market_number == 2:
         if pos < 2:
             return MarketAssignment(role_tier="insider", endowment_tokens=100.0)
-        if pos < 6:
+        if pos < info_slots:
             return MarketAssignment(role_tier="semi_informed", endowment_tokens=100.0)
         return MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
 
@@ -52,9 +63,11 @@ def get_assignment(session_rotation_id: int, participant_id: str, market_number:
         return MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
 
     if market_number == 4:
-        if pos < 2:
+        start = max(subject_count - info_slots, 0)
+        local_pos = pos - start
+        if local_pos >= 0 and local_pos < 2:
             return MarketAssignment(role_tier="insider", endowment_tokens=400.0)
-        if pos < 6:
+        if local_pos >= 0 and local_pos < info_slots:
             return MarketAssignment(role_tier="semi_informed", endowment_tokens=100.0)
         return MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
 
@@ -73,11 +86,13 @@ def get_scenario_for_market(session_rotation_id: int, market_number: int) -> str
     raise ValueError("market_number must be in [1, 4]")
 
 
-def get_market_config(session_rotation_id: int, market_number: int) -> MarketConfig:
+def get_market_config(session_rotation_id: int, market_number: int, lmsr_b_parameter: float = 18.0) -> MarketConfig:
     stage = market_number
     scenario = get_scenario_for_market(session_rotation_id, market_number)
     true_prob = {"A": 0.75, "B": 0.25, "C": 0.50, "D": 0.65}[scenario]
-    b_param = {1: 20.0, 2: 18.0, 3: 25.0, 4: 18.0}[market_number]
+    if lmsr_b_parameter <= 0:
+        raise ValueError("lmsr_b_parameter must be > 0")
+    b_param = float(lmsr_b_parameter)
     return MarketConfig(scenario_id=scenario, stage=stage, true_probability=true_prob, b_parameter=b_param)
 
 
@@ -88,12 +103,14 @@ def validate_rotation_matrix(rotation: dict[int, list[MarketAssignment]]) -> lis
         errors.append("Market 1 must assign uninformed + 100 tokens to all participants.")
 
     market_2 = rotation.get(2, [])
+    n = max(len(rotation.get(1, [])), 0)
     insiders_2 = sum(1 for a in market_2 if a.role_tier == "insider")
     semi_2 = sum(1 for a in market_2 if a.role_tier == "semi_informed")
     if insiders_2 != 2:
         errors.append("Market 2 must contain exactly 2 insiders.")
-    if semi_2 != 4:
-        errors.append("Market 2 must contain exactly 4 semi_informed participants.")
+    expected_info_slots = math.ceil(n / 2) if n > 0 else 0
+    if semi_2 != max(expected_info_slots - 2, 2):
+        errors.append("Market 2 semi_informed count must match subject-count coverage rule.")
 
     market_3 = rotation.get(3, [])
     whales_3 = sum(1 for a in market_3 if a.endowment_tokens == 400.0)
@@ -106,6 +123,8 @@ def validate_rotation_matrix(rotation: dict[int, list[MarketAssignment]]) -> lis
     insider_whales = sum(1 for a in market_4 if a.role_tier == "insider" and a.endowment_tokens == 400.0)
     if insider_whales != 2:
         errors.append("Market 4 must contain exactly 2 insider-whales.")
+    semi_4 = sum(1 for a in market_4 if a.role_tier == "semi_informed")
+    if semi_4 != max(expected_info_slots - 2, 2):
+        errors.append("Market 4 semi_informed count must match subject-count coverage rule.")
 
     return errors
-

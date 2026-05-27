@@ -47,6 +47,7 @@ export default function ComprehensionQuizScreen() {
     []
   );
 
+  /** @param {Record<string, string>} values */
   async function onSubmit(values) {
     const nextAttempts = attempts + 1;
     setAttempts(nextAttempts);

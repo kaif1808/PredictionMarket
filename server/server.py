@@ -10,6 +10,7 @@ from typing import Any
 
 import socketio
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -20,7 +21,17 @@ from sqlalchemy.orm import Session
 from server.config import load_settings
 from server.db import SessionLocal, get_db, init_db
 from server.db_models import AdminAction, DebriefResponse, Market, MarketRole, ParticipantSession, QuizAttempt, RiskElicitation, Round, SessionModel, Signal, TournamentRanking, Trade
-from server.events import ErrorEvent, LastTradePayload, PriceUpdateEvent, TradeRequest
+from server.events import (
+    ErrorEvent,
+    LastTradePayload,
+    MarketOutcomePublicEvent,
+    MarketResolvedEvent,
+    MarketStartedEvent,
+    PriceUpdateEvent,
+    RoundEndedEvent,
+    RoundStartedEvent,
+    TradeRequest,
+)
 from server import lmsr
 from server.orchestrator import Orchestrator, SessionPhase
 from server.scenarios import get_bulletin
@@ -31,12 +42,28 @@ logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.I
 logger = logging.getLogger("valdoria")
 
 fastapi_app = FastAPI(title="Valdoria Prediction Market")
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+socketio_cors: str | list[str]
+if "*" in settings.allowed_origins:
+    socketio_cors = "*"
+else:
+    socketio_cors = settings.allowed_origins
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=socketio_cors)
 combined_app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=fastapi_app)
 security = HTTPBasic()
-orchestrator = Orchestrator(SessionLocal)
+orchestrator = Orchestrator(
+    SessionLocal,
+    tournament_tie_break_mode=settings.tournament_tie_break_mode,
+    lmsr_b_parameter=settings.lmsr_b_parameter,
+)
 init_db()
 orchestrator.restore_from_db()
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 client_dist = Path(__file__).resolve().parents[1] / "client" / "dist"
 
@@ -151,13 +178,14 @@ def _log_admin_action(db: Session, session_id: int, action_type: str, reason: st
 
 async def _emit_market_resolution(session_id: int, market_id: int, outcome: int, db: Session) -> None:
     market = db.get(Market, market_id)
+    public_event = MarketOutcomePublicEvent(
+        outcome=outcome,
+        outcome_label="YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
+        true_probability=float(market.true_probability) if market else 0.5,
+    )
     await sio.emit(
         "market_outcome_public",
-        {
-            "outcome": outcome,
-            "outcome_label": "YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
-            "true_probability": float(market.true_probability) if market else 0.5,
-        },
+        public_event.model_dump(),
         room=_room_all(session_id),
     )
     if market is None:
@@ -167,16 +195,17 @@ async def _emit_market_resolution(session_id: int, market_id: int, outcome: int,
         payout = float(role.yes_held) if outcome == 1 else float(role.no_held)
         final_balance = float(role.final_balance or role.starting_balance)
         pnl = final_balance - float(role.endowment_tokens)
+        private_event = MarketResolvedEvent(
+            outcome=outcome,
+            outcome_label="YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
+            true_probability=float(market.true_probability),
+            payout=payout,
+            final_balance=final_balance,
+            pnl=pnl,
+        )
         await sio.emit(
             "market_resolved",
-            {
-                "outcome": outcome,
-                "outcome_label": "YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
-                "true_probability": float(market.true_probability),
-                "payout": payout,
-                "final_balance": final_balance,
-                "pnl": pnl,
-            },
+            private_event.model_dump(),
             room=_room_participant(session_id, role.participant_id),
         )
 
@@ -267,13 +296,11 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
     participant_id = ps.participant_id
 
     cookie_value = f"{session_id}:{participant_id}"
-    logger.warning(f"Setting cookie valdoria_auth={cookie_value}")
     response.set_cookie(
         key="valdoria_auth",
         value=cookie_value,
-        path="/",
-        httponly=False,
-        secure=False,
+        httponly=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         max_age=int(timedelta(hours=12).total_seconds()),
     )
@@ -281,7 +308,6 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
     ps.join_token = None
     db.add(ps)
     db.commit()
-    logger.warning(f"Join successful, returning session_id={session_id}, participant_id={participant_id}")
     return {"session_id": session_id, "participant_id": participant_id, "flow_step": ps.flow_step}
 
 
@@ -313,18 +339,19 @@ async def start_market(session_id: int, payload: StartMarketRequest, _: str = De
     roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
     for role in roles:
         _set_flow_step(db, session_id, role.participant_id, f"market-{market.market_number}")
+        event = MarketStartedEvent(
+            market_number=market.market_number,
+            stage=market.stage,
+            scenario_description=SCENARIO_DESCRIPTIONS.get(market.scenario_id, "Valdoria market scenario"),
+            role_tier=role.role_tier,
+            endowment_tokens=float(role.endowment_tokens),
+            starting_balance=float(role.starting_balance),
+            current_price=0.5,
+            max_rounds=5,
+        )
         await sio.emit(
             "market_started",
-            {
-                "market_number": market.market_number,
-                "stage": market.stage,
-                "scenario_description": SCENARIO_DESCRIPTIONS.get(market.scenario_id, "Valdoria market scenario"),
-                "role_tier": role.role_tier,
-                "endowment_tokens": float(role.endowment_tokens),
-                "starting_balance": float(role.starting_balance),
-                "current_price": 0.5,
-                "max_rounds": 5,
-            },
+            event.model_dump(),
             room=_room_participant(session_id, role.participant_id),
         )
     db.commit()
@@ -357,21 +384,18 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
         if signal is not None and signal.delivered:
             posterior = float(signal.posterior)
 
-        await sio.emit(
-            "round_started",
-            {
-                "round_number": round_row.round_number,
-                "trading_open": True,
-                "current_price": float(round_row.opening_price or 0.5),
-                "balance": float(role.starting_balance),
-                "yes_held": float(role.yes_held),
-                "no_held": float(role.no_held),
-                "bulletin": bulletin,
-                "posterior": posterior,
-                "round_deadline_unix_ms": deadline_ms,
-            },
-            room=_room_participant(session_id, participant_id),
+        event = RoundStartedEvent(
+            round_number=round_row.round_number,
+            trading_open=True,
+            current_price=float(round_row.opening_price or 0.5),
+            balance=float(role.starting_balance),
+            yes_held=float(role.yes_held),
+            no_held=float(role.no_held),
+            bulletin=bulletin,
+            posterior=posterior,
+            round_deadline_unix_ms=deadline_ms,
         )
+        await sio.emit("round_started", event.model_dump(), room=_room_participant(session_id, participant_id))
     return {"round_id": round_row.id, "round_number": round_row.round_number}
 
 
@@ -389,15 +413,12 @@ async def end_round(session_id: int, round_number: int, _: str = Depends(_admin_
             or 0
         )
 
-    await sio.emit(
-        "round_ended",
-        {
-            "round_number": round_row.round_number,
-            "closing_price": float(round_row.closing_price or 0.5),
-            "round_volume": round_volume,
-        },
-        room=_room_all(session_id),
+    event = RoundEndedEvent(
+        round_number=round_row.round_number,
+        closing_price=float(round_row.closing_price or 0.5),
+        round_volume=round_volume,
     )
+    await sio.emit("round_ended", event.model_dump(), room=_room_all(session_id))
     return {
         "round_id": round_row.id,
         "closing_price": float(round_row.closing_price or 0.5),
@@ -626,15 +647,12 @@ async def emergency_round_close(
         )
         or 0
     )
-    await sio.emit(
-        "round_ended",
-        {
-            "round_number": round_row.round_number,
-            "closing_price": float(round_row.closing_price or 0.5),
-            "round_volume": round_volume,
-        },
-        room=_room_all(session_id),
+    event = RoundEndedEvent(
+        round_number=round_row.round_number,
+        closing_price=float(round_row.closing_price or 0.5),
+        round_volume=round_volume,
     )
+    await sio.emit("round_ended", event.model_dump(), room=_room_all(session_id))
     _log_admin_action(db, session_id, "emergency_round_close", payload.reason)
     return {
         "ok": True,
@@ -941,7 +959,6 @@ def submit_debrief(payload: DebriefSubmitRequest, valdoria_auth: str | None = Co
 
 @fastapi_app.post("/flow_step")
 def update_flow_step(payload: FlowStepUpdateRequest, valdoria_auth: str | None = Cookie(default=None), db: Session = Depends(get_db)) -> dict[str, Any]:
-    logger.warning(f"flow_step received valdoria_auth: {valdoria_auth}")
     session_id, participant_id = _parse_auth_cookie(valdoria_auth)
     row = db.get(ParticipantSession, {"session_id": session_id, "participant_id": participant_id})
     if row is None:

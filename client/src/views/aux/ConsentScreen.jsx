@@ -8,6 +8,7 @@ export default function ConsentScreen() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
 
+  /** @param {import("react").FormEvent<HTMLFormElement>} e */
   async function onContinue(e) {
     e.preventDefault();
     if (!consented || !name.trim()) {
@@ -26,6 +27,10 @@ export default function ConsentScreen() {
         <p className="mb-4 text-sm text-slate-700">
           You are invited to participate in a decision-making study involving prediction-market
           trading decisions.
+        </p>
+        <p className="mb-4 text-sm text-slate-700">
+          Tournament incentives: final top-3 participants by total tokens receive prizes (€5, €3,
+          €2). Prize payment is processed manually after session closure.
         </p>
         <label className="mb-2 block text-sm">Full name</label>
         <input

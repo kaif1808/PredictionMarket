@@ -2,22 +2,30 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getSocket } from "../lib/socket";
+import type {
+  ErrorEvent,
+  MarketResolvedEvent,
+  ParticipantState,
+  PriceUpdateEvent,
+  RoundStartedEvent
+} from "../types/events";
 
 export default function TradingView() {
   const navigate = useNavigate();
-  const [state, setState] = useState(null);
-  const [direction, setDirection] = useState("yes");
+  const [state, setState] = useState<ParticipantState | null>(null);
+  const [direction, setDirection] = useState<"yes" | "no">("yes");
   const [quantity, setQuantity] = useState(1);
-  const [pricePath, setPricePath] = useState([]);
-  const [deadlineMs, setDeadlineMs] = useState(null);
+  const [pricePath, setPricePath] = useState<number[]>([]);
+  const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     apiGet("/state")
       .then((s) => {
-        setState(s);
-        setPricePath([s.current_price ?? 0.5]);
+        const participantState = s as ParticipantState;
+        setState(participantState);
+        setPricePath([participantState.current_price ?? 0.5]);
       })
       .catch(() => {
         navigate("/");
@@ -27,27 +35,30 @@ export default function TradingView() {
   useEffect(() => {
     const socket = getSocket();
 
-    function onRoundStarted(payload) {
-      setState((prev) => ({
-        ...(prev || {}),
-        current_round_number: payload.round_number,
-        current_price: payload.current_price,
-        balance: payload.balance,
-        yes_held: payload.yes_held,
-        no_held: payload.no_held,
-        bulletin: payload.bulletin,
-        posterior: payload.posterior
-      }));
+    function onRoundStarted(payload: RoundStartedEvent) {
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          current_round_number: payload.round_number,
+          current_price: payload.current_price,
+          balance: payload.balance,
+          yes_held: payload.yes_held,
+          no_held: payload.no_held,
+          bulletin: payload.bulletin,
+          posterior: payload.posterior
+        };
+      });
       setDeadlineMs(payload.round_deadline_unix_ms);
       setPricePath([payload.current_price]);
       setError("");
     }
 
-    function onPriceUpdate(payload) {
-      setState((prev) => ({
-        ...(prev || {}),
-        current_price: payload.current_price
-      }));
+    function onPriceUpdate(payload: PriceUpdateEvent) {
+      setState((prev) => {
+        if (!prev) return prev;
+        return { ...prev, current_price: payload.current_price };
+      });
       setPricePath((prev) => [...prev.slice(-39), payload.current_price]);
     }
 
@@ -55,23 +66,21 @@ export default function TradingView() {
       setDeadlineMs(null);
     }
 
-    function onMarketResolved() {
+    function onMarketResolved(_payload: MarketResolvedEvent) {
       navigate("/lobby");
     }
 
-    function onSessionClosed() {
+    function onSessionClosed(_payload: { session_id: number }) {
       navigate("/debrief");
     }
 
-    function onError(payload) {
+    function onError(payload: ErrorEvent) {
       setError(payload?.message || "Trade rejected");
       setSubmitting(false);
     }
 
-    function onStateSync() {
-      apiGet("/state")
-        .then((s) => setState(s))
-        .catch(() => {});
+    function onStateSync(payload: ParticipantState) {
+      setState(payload);
     }
 
     socket.on("round_started", onRoundStarted);
@@ -111,21 +120,29 @@ export default function TradingView() {
     return () => clearInterval(t);
   }, [deadlineMs]);
 
-  async function submitTrade(e) {
+  async function submitTrade(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!state || deadlineMs === null) return;
     setSubmitting(true);
     setError("");
     try {
-      const res = await apiPost("/trade", { direction, quantity: Number(quantity) });
-      setState((prev) => ({
-        ...(prev || {}),
-        balance: res.balance_after,
-        yes_held: res.yes_held,
-        no_held: res.no_held
-      }));
+      const res = (await apiPost("/trade", { direction, quantity: Number(quantity) })) as {
+        balance_after: number;
+        yes_held: number;
+        no_held: number;
+      };
+      setState((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          balance: res.balance_after,
+          yes_held: res.yes_held,
+          no_held: res.no_held
+        };
+      });
     } catch (err) {
-      setError(err.message);
+      const message = err instanceof Error ? err.message : "Trade failed";
+      setError(message);
     } finally {
       setSubmitting(false);
     }

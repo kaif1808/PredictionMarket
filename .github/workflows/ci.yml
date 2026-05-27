@@ -35,6 +35,10 @@ jobs:
         working-directory: client
         run: npm ci
 
+      - name: Typecheck frontend contract path
+        working-directory: client
+        run: npm run typecheck
+
       - name: Build frontend
         working-directory: client
         run: npm run build
@@ -42,3 +46,28 @@ jobs:
       - name: Migration smoke
         run: |
           DATABASE_URL=sqlite:///./ci_migration.db alembic upgrade head
+
+      - name: Deployment readiness (strict env)
+        env:
+          DATABASE_URL: postgres://ci.example/valdoria
+          SESSION_SECRET: ci-secret-not-default
+          ADMIN_USER: admin
+          ADMIN_PASS: admin-pass
+          ALLOWED_ORIGINS: https://ci.example
+          COOKIE_SECURE: "true"
+          TOURNAMENT_TIE_BREAK_MODE: shared_prize
+        run: python3 scripts/deployment_readiness_check.py --strict-env
+
+      - name: Prelaunch evidence dry run
+        run: |
+          python3 scripts/prelaunch_evidence.py \
+            --spawn-local \
+            --sessions 1 \
+            --subject-count 8 \
+            --trades-per-participant 1 \
+            --require-state-sync-ratio 1.0 \
+            --require-price-update-ratio 1.0 \
+            --max-trade-p99-ms 5000 \
+            --max-state-sync-p99-ms 5000 \
+            --reconnect-latency-budget-ms 5000 \
+            --output results/prelaunch_evidence.ci.json
