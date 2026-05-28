@@ -548,11 +548,36 @@ def list_session_participants(session_id: int, _: str = Depends(_admin_auth), db
     rows = db.scalars(
         select(ParticipantSession).where(ParticipantSession.session_id == session_id).order_by(ParticipantSession.participant_id)
     ).all()
+    role_rows = db.execute(
+        select(
+            MarketRole.participant_id,
+            Market.market_number,
+            MarketRole.role_tier,
+            MarketRole.endowment_tokens,
+        )
+        .join(Market, MarketRole.market_id == Market.id)
+        .where(Market.session_id == session_id)
+    ).all()
+
+    treatment_by_participant: dict[str, dict[int, dict[str, Any]]] = {}
+    for participant_id, market_number, role_tier, endowment_tokens in role_rows:
+        endowment_value = float(endowment_tokens)
+        information_treated = role_tier != "uninformed"
+        endowment_treated = endowment_value > 100
+        treatment_by_participant.setdefault(participant_id, {})[int(market_number)] = {
+            "role_tier": role_tier,
+            "endowment_tokens": endowment_value,
+            "information_treated": information_treated,
+            "endowment_treated": endowment_treated,
+            "treated": information_treated or endowment_treated,
+        }
+
     return [
         {
             "participant_id": r.participant_id,
             "flow_step": r.flow_step,
             "joined_at": r.joined_at.isoformat(),
+            "markets": treatment_by_participant.get(r.participant_id, {}),
         }
         for r in rows
     ]

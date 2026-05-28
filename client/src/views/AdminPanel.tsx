@@ -7,7 +7,19 @@ import {
 
 type AdminAuth = { user: string; pass: string };
 type SessionRow = { session_id: number; label: string; rotation_id: number; closed_at: string | null };
-type ParticipantRow = { participant_id: string; flow_step: string; joined_at: string };
+type MarketTreatment = {
+  role_tier: "uninformed" | "semi_informed" | "insider";
+  endowment_tokens: number;
+  information_treated: boolean;
+  endowment_treated: boolean;
+  treated: boolean;
+};
+type ParticipantRow = {
+  participant_id: string;
+  flow_step: string;
+  joined_at: string;
+  markets: Record<string, MarketTreatment>;
+};
 type TournamentRow = {
   participant_id: string;
   rank: number;
@@ -63,6 +75,7 @@ export default function AdminPanel() {
   const [exportText, setExportText] = useState("");
   const [marketNumber, setMarketNumber] = useState(1);
   const [roundNumber, setRoundNumber] = useState(1);
+  const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(16);
   const [tab, setTab] = useState<AdminTab>("control");
 
   async function loadSessions() {
@@ -121,9 +134,10 @@ export default function AdminPanel() {
 
   async function createSession() {
     const label = `S${new Date().toISOString().slice(0, 10)}-A`;
+    const subjectCount = Math.max(1, Math.min(20, Math.trunc(newSessionSubjectCount || 16)));
     const created = (await apiPost(
       "/admin/sessions",
-      { label, rotation_id: 1, subject_count: 16 },
+      { label, rotation_id: 1, subject_count: subjectCount },
       auth
     )) as { session_id: number };
     setSelectedSession(created.session_id);
@@ -314,6 +328,17 @@ export default function AdminPanel() {
                 ))}
               </div>
               <div className="space-y-2">
+                <label className="block text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
+                  Participants
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={newSessionSubjectCount}
+                  onChange={(e) => setNewSessionSubjectCount(Number(e.target.value))}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none"
+                />
                 <button
                   onClick={() => createSession().catch((err) => setMessage(err instanceof Error ? err.message : "Create failed"))}
                   className="w-full py-2.5 border border-border text-[11px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"
@@ -423,8 +448,8 @@ export default function AdminPanel() {
               </button>
             </div>
             <div className="border border-border overflow-hidden">
-              <div className="grid grid-cols-[6rem_1fr_6rem_6rem] border-b border-border bg-card/60">
-                {["ID", "Flow Step", "Joined", "Actions"].map((h) => (
+              <div className="grid grid-cols-[5rem_1fr_18rem_6rem_8rem] border-b border-border bg-card/60">
+                {["ID", "Flow Step", "Treatment by Market", "Joined", "Actions"].map((h) => (
                   <div key={h} className="px-4 py-2 text-[9px] font-mono uppercase tracking-[0.12em] text-muted-foreground border-r border-border last:border-r-0">
                     {h}
                   </div>
@@ -433,9 +458,36 @@ export default function AdminPanel() {
               {participants.length === 0 ? (
                 <div className="px-4 py-6 text-sm font-mono text-muted-foreground">No participants yet.</div>
               ) : participants.map((p) => (
-                <div key={p.participant_id} className="grid grid-cols-[6rem_1fr_6rem_6rem] border-b border-border last:border-b-0">
+                <div key={p.participant_id} className="grid grid-cols-[5rem_1fr_18rem_6rem_8rem] border-b border-border last:border-b-0">
                   <div className="px-4 py-2.5 text-[11px] font-mono text-foreground border-r border-border">{p.participant_id}</div>
                   <div className="px-4 py-2.5 text-[11px] font-mono text-muted-foreground border-r border-border">{p.flow_step}</div>
+                  <div className="px-2 py-2 border-r border-border">
+                    <div className="grid grid-cols-4 gap-1">
+                      {[1, 2, 3, 4].map((marketNumberCell) => {
+                        const allocation = p.markets?.[String(marketNumberCell)];
+                        return (
+                          <div key={marketNumberCell} className="border border-border/80 px-1 py-1">
+                            {!allocation ? (
+                              <p className="text-center text-[9px] font-mono text-muted-foreground">—</p>
+                            ) : (
+                              <>
+                                <p className="text-[9px] font-mono text-foreground">M{marketNumberCell}</p>
+                                <p className="text-[9px] font-mono text-muted-foreground">
+                                  {allocation.role_tier === "semi_informed" ? "semi" : allocation.role_tier}
+                                </p>
+                                <p className="text-[9px] font-mono text-muted-foreground">
+                                  I:{allocation.information_treated ? "Y" : "N"} E:{allocation.endowment_treated ? "Y" : "N"}
+                                </p>
+                                <p className={`text-[9px] font-mono ${allocation.treated ? "text-green-400" : "text-muted-foreground"}`}>
+                                  Any:{allocation.treated ? "Y" : "N"}
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <div className="px-4 py-2.5 text-[10px] font-mono text-muted-foreground border-r border-border">
                     {p.joined_at ? new Date(p.joined_at).toLocaleTimeString() : "—"}
                   </div>

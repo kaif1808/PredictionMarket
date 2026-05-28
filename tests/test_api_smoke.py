@@ -122,3 +122,46 @@ def test_start_round_invalid_phase_returns_400() -> None:
     )
     assert start_round.status_code == 400
     assert start_round.json()["detail"] == "Cannot start round from current phase"
+
+
+def test_admin_participants_include_actual_treatment_only_for_started_markets() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "participants-treatment", "rotation_id": 1, "subject_count": 8},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    before_start = client.get(f"/admin/sessions/{session_id}/participants", auth=auth)
+    assert before_start.status_code == 200
+    before_rows = before_start.json()
+    assert len(before_rows) == 8
+    assert all(row["markets"] == {} for row in before_rows)
+
+    start_market = client.post(
+        f"/admin/sessions/{session_id}/markets",
+        auth=auth,
+        json={"market_number": 1},
+    )
+    assert start_market.status_code == 200
+
+    after_start = client.get(f"/admin/sessions/{session_id}/participants", auth=auth)
+    assert after_start.status_code == 200
+    for row in after_start.json():
+        assert "1" in row["markets"]
+        assert "2" not in row["markets"]
+        market1 = row["markets"]["1"]
+        assert set(market1.keys()) == {
+            "role_tier",
+            "endowment_tokens",
+            "information_treated",
+            "endowment_treated",
+            "treated",
+        }
+        assert market1["information_treated"] == (market1["role_tier"] != "uninformed")
+        assert market1["endowment_treated"] == (market1["endowment_tokens"] > 100)
+        assert market1["treated"] == (market1["information_treated"] or market1["endowment_treated"])
