@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getSocket } from "../lib/socket";
@@ -74,13 +74,21 @@ export default function TradingView() {
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const livePrice = state?.current_price ?? 0.5;
+  const livePriceRef = useRef(livePrice);
+
+  useEffect(() => {
+    livePriceRef.current = livePrice;
+  }, [livePrice]);
 
   function seedChartFromState(participantState: ParticipantState) {
     const currentPrice = participantState.current_price ?? 0.5;
     if (participantState.phase === "round_open" && participantState.round_deadline_unix_ms !== null) {
       const seedDeadlineMs = participantState.round_deadline_unix_ms;
       const seedRoundStartMs = seedDeadlineMs - ROUND_DURATION_MS;
-      const seedElapsedSec = Math.max(0, Math.floor((Date.now() - seedRoundStartMs) / 1000));
+      const seedElapsedSec = Math.min(
+        ROUND_DURATION_SECONDS,
+        Math.max(0, Math.floor((Date.now() - seedRoundStartMs) / 1000))
+      );
       setDeadlineMs(seedDeadlineMs);
       setRoundStartMs(seedRoundStartMs);
       setPricePath([{ elapsedSec: seedElapsedSec, price: currentPrice }]);
@@ -127,7 +135,10 @@ export default function TradingView() {
       setRoundStartMs(startedAtMs);
       setPricePath([
         {
-          elapsedSec: Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)),
+          elapsedSec: Math.min(
+            ROUND_DURATION_SECONDS,
+            Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+          ),
           price: payload.current_price
         }
       ]);
@@ -206,21 +217,28 @@ export default function TradingView() {
     if (deadlineMs === null || roundStartMs === null) return;
     const startMs = roundStartMs;
     function appendSample() {
-      const elapsedSec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      const elapsedSec = Math.min(
+        ROUND_DURATION_SECONDS,
+        Math.max(0, Math.floor((Date.now() - startMs) / 1000))
+      );
       setPricePath((prev) => {
-        if (prev.length === 0) return [{ elapsedSec, price: livePrice }];
+        if (prev.length === 0) return [{ elapsedSec, price: livePriceRef.current }];
         const last = prev[prev.length - 1];
         if (last.elapsedSec === elapsedSec) {
-          if (last.price === livePrice) return prev;
-          return [...prev.slice(0, -1), { elapsedSec, price: livePrice }];
+          if (last.price === livePriceRef.current) return prev;
+          return [...prev.slice(0, -1), { elapsedSec, price: livePriceRef.current }];
         }
-        return [...prev, { elapsedSec, price: livePrice }];
+        const next = [...prev];
+        for (let sec = last.elapsedSec + 1; sec <= elapsedSec; sec += 1) {
+          next.push({ elapsedSec: sec, price: livePriceRef.current });
+        }
+        return next;
       });
     }
     appendSample();
     const ticker = setInterval(appendSample, 1000);
     return () => clearInterval(ticker);
-  }, [deadlineMs, roundStartMs, livePrice]);
+  }, [deadlineMs, roundStartMs]);
 
   // Trade submit
   async function submitTrade(e: React.FormEvent<HTMLFormElement>) {
@@ -325,7 +343,8 @@ export default function TradingView() {
                   <XAxis
                     dataKey="elapsedSec"
                     type="number"
-                    domain={["dataMin", "dataMax"]}
+                    domain={[0, ROUND_DURATION_SECONDS]}
+                    allowDataOverflow
                     tickFormatter={(value) => `${value}s`}
                     tick={{ fill: "var(--muted-foreground)", fontSize: 9, fontFamily: "JetBrains Mono, monospace" }}
                     axisLine={false}
