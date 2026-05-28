@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiGet } from "../lib/api";
-import type { ParticipantState } from "../types/events";
+import type { MarketResolvedEvent, ParticipantState } from "../types/events";
 import { Radio } from "lucide-react";
 
 export default function LobbyScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [state, setState] = useState<ParticipantState | null>(null);
+  const [resolutionBanner, setResolutionBanner] = useState<MarketResolvedEvent | null>(() => {
+    const navState = location.state as { marketResolution?: MarketResolvedEvent } | null;
+    return navState?.marketResolution ?? null;
+  });
   const [dots, setDots] = useState(".");
 
   // Animated dots
@@ -14,6 +19,15 @@ export default function LobbyScreen() {
     const t = setInterval(() => setDots((d) => (d.length >= 3 ? "." : d + ".")), 700);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const navState = location.state as { marketResolution?: MarketResolvedEvent } | null;
+    const nextResolution = navState?.marketResolution ?? null;
+    setResolutionBanner(nextResolution);
+    if (!nextResolution) return;
+    const t = window.setTimeout(() => setResolutionBanner(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [location.key]);
 
   // Polling loop — preserved exactly
   useEffect(() => {
@@ -45,6 +59,16 @@ export default function LobbyScreen() {
     <div className="min-h-screen flex items-center justify-center px-6">
       <div className="w-full max-w-xs">
         <div className="border border-border bg-card/60 p-8">
+          {resolutionBanner && (
+            <div className="mb-6 border border-green-500/20 bg-green-500/5 px-4 py-3">
+              <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-green-400">
+                Market resolved {resolutionBanner.outcome === 1 ? "YES" : "NO"}
+              </p>
+              <p className="mt-1 text-[11px] font-mono text-muted-foreground/60">
+                {resolutionBanner.outcome_label}
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-2.5 mb-8">
             <Radio className="w-4 h-4 text-muted-foreground/50 animate-pulse" />
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground/50">

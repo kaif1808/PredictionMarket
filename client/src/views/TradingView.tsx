@@ -243,7 +243,7 @@ export default function TradingView() {
     }
 
     function onMarketResolved(_payload: MarketResolvedEvent) {
-      navigate("/lobby");
+      navigate("/lobby", { state: { marketResolution: _payload } });
     }
 
     function onSessionClosed(_payload: { session_id: number }) {

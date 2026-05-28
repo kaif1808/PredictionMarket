@@ -46,6 +46,8 @@ type DashboardMarket = {
   latest_round_number: number | null;
   latest_closing_price: number | null;
   latest_benchmark: number | null;
+  outcome: 0 | 1 | null;
+  outcome_label: string | null;
 };
 type DashboardResponse = {
   session_id: number;
@@ -568,6 +570,16 @@ export default function AdminPanel() {
                           Market {m.market_number} · Stage {m.stage} · Scenario {m.scenario_id}
                         </span>
                       </div>
+                      {m.outcome != null && (
+                        <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-green-400">
+                          Market resolved {m.outcome === 1 ? "YES" : "NO"}
+                          {m.outcome_label && (
+                            <span className="ml-2 text-muted-foreground/60 normal-case tracking-normal">
+                              {m.outcome_label}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div className="flex items-baseline gap-2 mb-3">
                         <span className="text-3xl font-mono font-semibold tabular-nums">
                           {(Number(m.current_price) * 100).toFixed(1)}%

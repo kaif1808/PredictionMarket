@@ -49,6 +49,7 @@ def test_dashboard_endpoint_returns_live_market_cards() -> None:
     assert participant.post("/auth/join", json={"join_token": token}).status_code == 200
     assert participant.post("/trade", json={"direction": "yes", "quantity": 2}).status_code == 200
     assert admin.post(f"/admin/sessions/{sid}/rounds/1/end", auth=auth).status_code == 200
+    assert admin.post(f"/admin/sessions/{sid}/markets/1/resolve", auth=auth).status_code == 200
 
     dashboard = admin.get(f"/admin/sessions/{sid}/dashboard", auth=auth)
     assert dashboard.status_code == 200
@@ -61,6 +62,8 @@ def test_dashboard_endpoint_returns_live_market_cards() -> None:
     assert m["rounds_opened"] == 1
     assert m["total_volume"] == 2
     assert m["latest_round_number"] == 1
+    assert m["outcome"] == 1
+    assert m["outcome_label"] == "YES — Conflict occurred"
 
 
 def test_state_includes_round_deadline_only_while_round_open() -> None:
@@ -140,6 +143,8 @@ def test_market_resolution_emits_public_outcome_and_private_payouts(monkeypatch:
     assert len(private_events) == 8
     for _, room, data in private_events:
         assert room.startswith(f"session:{sid}:participant:")
+        assert data["outcome"] in {0, 1}
+        assert data["outcome_label"] in {"YES — Conflict occurred", "NO — Conflict did not occur"}
         assert "payout" in data and "final_balance" in data and "pnl" in data
 
 

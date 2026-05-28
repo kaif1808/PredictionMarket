@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from server.config import load_settings
 from server.db import SessionLocal, get_db, init_db
-from server.db_models import AdminAction, DebriefResponse, Market, MarketRole, ParticipantSession, QuizAttempt, RiskElicitation, Round, SessionModel, Signal, TournamentRanking, Trade
+from server.db_models import AdminAction, DebriefResponse, Market, MarketResolution, MarketRole, ParticipantSession, QuizAttempt, RiskElicitation, Round, SessionModel, Signal, TournamentRanking, Trade
 from server.events import (
     ErrorEvent,
     LastTradePayload,
@@ -195,11 +195,17 @@ def _log_admin_action(db: Session, session_id: int, action_type: str, reason: st
     db.commit()
 
 
+def _resolve_outcome_label(outcome: int | None) -> str | None:
+    if outcome is None:
+        return None
+    return "YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur"
+
+
 async def _emit_market_resolution(session_id: int, market_id: int, outcome: int, db: Session) -> None:
     market = db.get(Market, market_id)
     public_event = MarketOutcomePublicEvent(
         outcome=outcome,
-        outcome_label="YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
+        outcome_label=_resolve_outcome_label(outcome) or "NO — Conflict did not occur",
         true_probability=float(market.true_probability) if market else 0.5,
     )
     await sio.emit(
@@ -216,7 +222,7 @@ async def _emit_market_resolution(session_id: int, market_id: int, outcome: int,
         pnl = final_balance - float(role.endowment_tokens)
         private_event = MarketResolvedEvent(
             outcome=outcome,
-            outcome_label="YES — Conflict occurred" if outcome == 1 else "NO — Conflict did not occur",
+            outcome_label=_resolve_outcome_label(outcome) or "NO — Conflict did not occur",
             true_probability=float(market.true_probability),
             payout=payout,
             final_balance=final_balance,
@@ -638,6 +644,7 @@ def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Sessio
     for m in markets:
         market_rounds = rounds_by_market.get(m.id, [])
         latest_round = market_rounds[-1] if market_rounds else None
+        resolution = db.get(MarketResolution, m.id)
         market_cards.append(
             {
                 "market_id": m.id,
@@ -656,6 +663,8 @@ def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Sessio
                     if latest_round and latest_round.bayesian_benchmark is not None
                     else None
                 ),
+                "outcome": resolution.outcome if resolution else None,
+                "outcome_label": _resolve_outcome_label(resolution.outcome) if resolution else None,
             }
         )
 
