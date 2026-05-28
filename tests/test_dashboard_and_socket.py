@@ -63,6 +63,48 @@ def test_dashboard_endpoint_returns_live_market_cards() -> None:
     assert m["latest_round_number"] == 1
 
 
+def test_state_includes_round_deadline_only_while_round_open() -> None:
+    admin = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+    create = admin.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "state-deadline", "rotation_id": 1, "subject_count": 8},
+    )
+    assert create.status_code == 200
+    sid = create.json()["session_id"]
+
+    assert admin.post(
+        f"/admin/sessions/{sid}/markets",
+        auth=auth,
+        json={"market_number": 1},
+    ).status_code == 200
+    assert admin.post(
+        f"/admin/sessions/{sid}/rounds",
+        auth=auth,
+        json={"round_number": 1},
+    ).status_code == 200
+
+    participant = TestClient(fastapi_app)
+    token = _join_token(sid, "P01")
+    assert participant.post("/auth/join", json={"join_token": token}).status_code == 200
+
+    state_open = participant.get("/state")
+    assert state_open.status_code == 200
+    payload_open = state_open.json()
+    assert payload_open["phase"] == "round_open"
+    assert isinstance(payload_open["round_deadline_unix_ms"], int)
+    assert payload_open["round_deadline_unix_ms"] > 0
+
+    assert admin.post(f"/admin/sessions/{sid}/rounds/1/end", auth=auth).status_code == 200
+
+    state_closed = participant.get("/state")
+    assert state_closed.status_code == 200
+    payload_closed = state_closed.json()
+    assert payload_closed["phase"] == "round_closed"
+    assert payload_closed["round_deadline_unix_ms"] is None
+
+
 def test_market_resolution_emits_public_outcome_and_private_payouts(monkeypatch: pytest.MonkeyPatch) -> None:
     admin = TestClient(fastapi_app)
     auth = ("admin", "admin")
@@ -149,3 +191,5 @@ async def test_socket_connect_emits_full_state_sync(monkeypatch: pytest.MonkeyPa
     assert "phase" in state
     assert "current_price" in state
     assert "bulletin" in state
+    assert "round_deadline_unix_ms" in state
+    assert isinstance(state["round_deadline_unix_ms"], int)

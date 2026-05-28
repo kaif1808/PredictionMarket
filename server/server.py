@@ -38,6 +38,7 @@ from server.scenarios import get_bulletin
 
 
 settings = load_settings()
+ROUND_DURATION_SECONDS = 90
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger("valdoria")
 
@@ -276,6 +277,16 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
             role_tier=role.role_tier,
             stage=market.stage,
         )
+    round_deadline_unix_ms = None
+    if (
+        phase == SessionPhase.ROUND_OPEN.value
+        and round_row is not None
+        and round_row.opened_at is not None
+    ):
+        opened_at = round_row.opened_at
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        round_deadline_unix_ms = int((opened_at + timedelta(seconds=ROUND_DURATION_SECONDS)).timestamp() * 1000)
 
     return {
         "session_id": session_id,
@@ -295,6 +306,7 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         ),
         "bulletin": bulletin,
         "posterior": posterior,
+        "round_deadline_unix_ms": round_deadline_unix_ms,
     }
 
 
@@ -390,7 +402,7 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
         s.participant_id: s
         for s in db.scalars(select(Signal).where(Signal.round_id == round_row.id)).all()
     }
-    deadline_ms = int((datetime.now(timezone.utc) + timedelta(seconds=90)).timestamp() * 1000)
+    deadline_ms = int((datetime.now(timezone.utc) + timedelta(seconds=ROUND_DURATION_SECONDS)).timestamp() * 1000)
     for role in role_rows:
         participant_id = role.participant_id
         signal = signals_by_pid.get(participant_id)

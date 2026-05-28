@@ -156,6 +156,8 @@ def test_socket_reconnect_state_sync_under_five_seconds(tmp_path: Path) -> None:
         assert first_payload["participant_id"] == "P01"
         assert "phase" in first_payload
         assert "current_price" in first_payload
+        assert "round_deadline_unix_ms" in first_payload
+        assert isinstance(first_payload["round_deadline_unix_ms"], int)
         sio.disconnect()
 
         state_event.clear()
@@ -169,6 +171,8 @@ def test_socket_reconnect_state_sync_under_five_seconds(tmp_path: Path) -> None:
         assert reconnect_payload["participant_id"] == "P01"
         assert "phase" in reconnect_payload
         assert "current_price" in reconnect_payload
+        assert "round_deadline_unix_ms" in reconnect_payload
+        assert isinstance(reconnect_payload["round_deadline_unix_ms"], int)
         sio.disconnect()
     finally:
         proc.terminate()

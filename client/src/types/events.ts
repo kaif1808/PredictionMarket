@@ -68,6 +68,7 @@ export interface ParticipantState {
   current_price: number;
   bulletin: BulletinPayload | null;
   posterior: number | null;
+  round_deadline_unix_ms: number | null;
 }
 
 export interface ServerToClientEvents {

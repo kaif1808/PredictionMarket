@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getSocket } from "../lib/socket";
@@ -60,16 +60,36 @@ function IntelPanel({
 }
 
 export default function TradingView() {
+  const ROUND_DURATION_SECONDS = 90;
+  const ROUND_DURATION_MS = ROUND_DURATION_SECONDS * 1000;
   const navigate = useNavigate();
   const [state, setState] = useState<ParticipantState | null>(null);
   const [direction, setDirection] = useState<"yes" | "no">("yes");
   const [quantity, setQuantity] = useState(1);
-  const [pricePath, setPricePath] = useState<number[]>([]);
+  const [pricePath, setPricePath] = useState<Array<{ elapsedSec: number; price: number }>>([]);
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
+  const [roundStartMs, setRoundStartMs] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const livePrice = state?.current_price ?? 0.5;
+
+  function seedChartFromState(participantState: ParticipantState) {
+    const currentPrice = participantState.current_price ?? 0.5;
+    if (participantState.phase === "round_open" && participantState.round_deadline_unix_ms !== null) {
+      const seedDeadlineMs = participantState.round_deadline_unix_ms;
+      const seedRoundStartMs = seedDeadlineMs - ROUND_DURATION_MS;
+      const seedElapsedSec = Math.max(0, Math.floor((Date.now() - seedRoundStartMs) / 1000));
+      setDeadlineMs(seedDeadlineMs);
+      setRoundStartMs(seedRoundStartMs);
+      setPricePath([{ elapsedSec: seedElapsedSec, price: currentPrice }]);
+      return;
+    }
+    setDeadlineMs(null);
+    setRoundStartMs(null);
+    setPricePath([{ elapsedSec: 0, price: currentPrice }]);
+  }
 
   // Initial state fetch
   useEffect(() => {
@@ -77,7 +97,7 @@ export default function TradingView() {
       .then((s) => {
         const participantState = s as ParticipantState;
         setState(participantState);
-        setPricePath([participantState.current_price ?? 0.5]);
+        seedChartFromState(participantState);
       })
       .catch(() => {
         navigate("/");
@@ -103,7 +123,14 @@ export default function TradingView() {
         };
       });
       setDeadlineMs(payload.round_deadline_unix_ms);
-      setPricePath([payload.current_price]);
+      const startedAtMs = payload.round_deadline_unix_ms - ROUND_DURATION_MS;
+      setRoundStartMs(startedAtMs);
+      setPricePath([
+        {
+          elapsedSec: Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)),
+          price: payload.current_price
+        }
+      ]);
       setError("");
     }
 
@@ -112,11 +139,11 @@ export default function TradingView() {
         if (!prev) return prev;
         return { ...prev, current_price: payload.current_price };
       });
-      setPricePath((prev) => [...prev.slice(-39), payload.current_price]);
     }
 
     function onRoundEnded() {
       setDeadlineMs(null);
+      setRoundStartMs(null);
     }
 
     function onMarketResolved(_payload: MarketResolvedEvent) {
@@ -134,6 +161,7 @@ export default function TradingView() {
 
     function onStateSync(payload: ParticipantState) {
       setState(payload);
+      seedChartFromState(payload);
     }
 
     socket.on("round_started", onRoundStarted);
@@ -166,12 +194,33 @@ export default function TradingView() {
       setSecondsLeft(raw > 0 ? raw : 0);
       if (Date.now() > deadlineMs!) {
         setDeadlineMs(null);
+        setRoundStartMs(null);
       }
     }
     tick();
     const t = setInterval(tick, 500);
     return () => clearInterval(t);
   }, [deadlineMs]);
+
+  useEffect(() => {
+    if (deadlineMs === null || roundStartMs === null) return;
+    const startMs = roundStartMs;
+    function appendSample() {
+      const elapsedSec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      setPricePath((prev) => {
+        if (prev.length === 0) return [{ elapsedSec, price: livePrice }];
+        const last = prev[prev.length - 1];
+        if (last.elapsedSec === elapsedSec) {
+          if (last.price === livePrice) return prev;
+          return [...prev.slice(0, -1), { elapsedSec, price: livePrice }];
+        }
+        return [...prev, { elapsedSec, price: livePrice }];
+      });
+    }
+    appendSample();
+    const ticker = setInterval(appendSample, 1000);
+    return () => clearInterval(ticker);
+  }, [deadlineMs, roundStartMs, livePrice]);
 
   // Trade submit
   async function submitTrade(e: React.FormEvent<HTMLFormElement>) {
@@ -210,8 +259,8 @@ export default function TradingView() {
     );
   }
 
-  const currentPrice = state.current_price ?? 0.5;
-  const chartData = pricePath.map((p, i) => ({ t: i, price: p }));
+  const currentPrice = livePrice;
+  const chartData = pricePath;
   const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
   const tradingOpen = deadlineMs !== null;
   const isSell = mode === "sell";
@@ -273,7 +322,16 @@ export default function TradingView() {
               <ResponsiveContainer width="100%" height={160}>
                 <LineChart data={chartData} margin={{ top: 4, right: 38, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="1 8" stroke="rgba(148,163,184,0.08)" vertical={false} />
-                  <XAxis dataKey="t" hide type="number" domain={["dataMin", "dataMax"]} />
+                  <XAxis
+                    dataKey="elapsedSec"
+                    type="number"
+                    domain={["dataMin", "dataMax"]}
+                    tickFormatter={(value) => `${value}s`}
+                    tick={{ fill: "var(--muted-foreground)", fontSize: 9, fontFamily: "JetBrains Mono, monospace" }}
+                    axisLine={false}
+                    tickLine={false}
+                    height={16}
+                  />
                   <YAxis
                     domain={[0, 1]}
                     orientation="right"
@@ -288,13 +346,13 @@ export default function TradingView() {
                     content={({ active, payload }) =>
                       active && payload?.length ? (
                         <div className="border border-border bg-background px-2.5 py-1.5 text-[11px] font-mono text-foreground/80">
-                          P(YES) = {((payload[0].value as number) * 100).toFixed(2)}%
+                          t={payload[0].payload?.elapsedSec ?? 0}s · P(YES) = {((payload[0].value as number) * 100).toFixed(2)}%
                         </div>
                       ) : null
                     }
                   />
                   <Line
-                    type="monotone"
+                    type="stepAfter"
                     dataKey="price"
                     stroke="#22c55e"
                     strokeWidth={1.5}
