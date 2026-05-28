@@ -62,6 +62,8 @@ function IntelPanel({
 export default function TradingView() {
   const ROUND_DURATION_SECONDS = 90;
   const ROUND_DURATION_MS = ROUND_DURATION_SECONDS * 1000;
+  const PRICE_TICK_MS = 250;
+  const MAX_TICKS = Math.floor(ROUND_DURATION_MS / PRICE_TICK_MS);
   const navigate = useNavigate();
   const [state, setState] = useState<ParticipantState | null>(null);
   const [direction, setDirection] = useState<"yes" | "no">("yes");
@@ -76,6 +78,18 @@ export default function TradingView() {
   const livePrice = state?.current_price ?? 0.5;
   const livePriceRef = useRef(livePrice);
 
+  function elapsedSecToTick(elapsedSec: number): number {
+    return Math.max(0, Math.min(MAX_TICKS, Math.round((elapsedSec * 1000) / PRICE_TICK_MS)));
+  }
+
+  function tickToElapsedSec(tick: number): number {
+    return (tick * PRICE_TICK_MS) / 1000;
+  }
+
+  function wallClockToTick(roundStartMs: number): number {
+    return Math.max(0, Math.min(MAX_TICKS, Math.floor((Date.now() - roundStartMs) / PRICE_TICK_MS)));
+  }
+
   useEffect(() => {
     livePriceRef.current = livePrice;
   }, [livePrice]);
@@ -85,10 +99,7 @@ export default function TradingView() {
     if (participantState.phase === "round_open" && participantState.round_deadline_unix_ms !== null) {
       const seedDeadlineMs = participantState.round_deadline_unix_ms;
       const seedRoundStartMs = seedDeadlineMs - ROUND_DURATION_MS;
-      const seedElapsedSec = Math.min(
-        ROUND_DURATION_SECONDS,
-        Math.max(0, Math.floor((Date.now() - seedRoundStartMs) / 1000))
-      );
+      const seedElapsedSec = tickToElapsedSec(wallClockToTick(seedRoundStartMs));
       setDeadlineMs(seedDeadlineMs);
       setRoundStartMs(seedRoundStartMs);
       setPricePath([{ elapsedSec: seedElapsedSec, price: currentPrice }]);
@@ -135,10 +146,7 @@ export default function TradingView() {
       setRoundStartMs(startedAtMs);
       setPricePath([
         {
-          elapsedSec: Math.min(
-            ROUND_DURATION_SECONDS,
-            Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
-          ),
+          elapsedSec: tickToElapsedSec(wallClockToTick(startedAtMs)),
           price: payload.current_price
         }
       ]);
@@ -217,28 +225,59 @@ export default function TradingView() {
     if (deadlineMs === null || roundStartMs === null) return;
     const startMs = roundStartMs;
     function appendSample() {
-      const elapsedSec = Math.min(
-        ROUND_DURATION_SECONDS,
-        Math.max(0, Math.floor((Date.now() - startMs) / 1000))
-      );
+      const tick = wallClockToTick(startMs);
+      const elapsedSec = tickToElapsedSec(tick);
       setPricePath((prev) => {
         if (prev.length === 0) return [{ elapsedSec, price: livePriceRef.current }];
         const last = prev[prev.length - 1];
+        const lastTick = elapsedSecToTick(last.elapsedSec);
         if (last.elapsedSec === elapsedSec) {
           if (last.price === livePriceRef.current) return prev;
           return [...prev.slice(0, -1), { elapsedSec, price: livePriceRef.current }];
         }
         const next = [...prev];
-        for (let sec = last.elapsedSec + 1; sec <= elapsedSec; sec += 1) {
-          next.push({ elapsedSec: sec, price: livePriceRef.current });
+        for (let t = lastTick + 1; t <= tick; t += 1) {
+          next.push({ elapsedSec: tickToElapsedSec(t), price: livePriceRef.current });
         }
         return next;
       });
     }
     appendSample();
-    const ticker = setInterval(appendSample, 1000);
+    const ticker = setInterval(appendSample, PRICE_TICK_MS);
     return () => clearInterval(ticker);
   }, [deadlineMs, roundStartMs]);
+
+  // Fallback state refresh to keep trade view live even if socket updates are delayed.
+  useEffect(() => {
+    let alive = true;
+    async function refreshState() {
+      try {
+        const payload = (await apiGet("/state")) as ParticipantState;
+        if (!alive) return;
+        setState(payload);
+        if (payload.phase === "round_open" && payload.round_deadline_unix_ms !== null) {
+          const nextDeadlineMs = payload.round_deadline_unix_ms;
+          const nextRoundStartMs = nextDeadlineMs - ROUND_DURATION_MS;
+          setDeadlineMs(nextDeadlineMs);
+          setRoundStartMs(nextRoundStartMs);
+          setPricePath((prev) => {
+            if (prev.length > 0) return prev;
+            return [{ elapsedSec: tickToElapsedSec(wallClockToTick(nextRoundStartMs)), price: payload.current_price ?? 0.5 }];
+          });
+        } else {
+          setDeadlineMs(null);
+          setRoundStartMs(null);
+        }
+      } catch {
+        // Ignore transient polling failures; socket remains primary.
+      }
+    }
+    const t = setInterval(refreshState, 2000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   // Trade submit
   async function submitTrade(e: React.FormEvent<HTMLFormElement>) {
@@ -371,12 +410,14 @@ export default function TradingView() {
                     }
                   />
                   <Line
-                    type="stepAfter"
+                    type="monotone"
                     dataKey="price"
                     stroke="#22c55e"
                     strokeWidth={1.5}
                     dot={false}
-                    isAnimationActive={false}
+                    isAnimationActive
+                    animationDuration={220}
+                    animationEasing="ease-out"
                     activeDot={{ r: 3.5, fill: "#22c55e", strokeWidth: 2 }}
                   />
                 </LineChart>
