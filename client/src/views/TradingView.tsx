@@ -575,42 +575,47 @@ export default function TradingView() {
             {/* Position */}
             <div>
               <SectionLabel>Position</SectionLabel>
-              <div className="border border-border divide-y divide-border">
-                <div className="px-4 py-3">
-                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">Balance</p>
-                  <p className="text-xl font-mono font-medium tabular-nums text-foreground">
-                    {balance.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
-                  </p>
+              <div className="border border-border">
+                <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
+                  <div className="px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">Total Cash</p>
+                    <p className="text-xl font-mono font-medium tabular-nums text-foreground">
+                      {balance.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                    </p>
+                  </div>
+                  <div className="px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES</p>
+                    <p className="text-xl font-mono font-medium tabular-nums text-green-500">
+                      {yesHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
+                    </p>
+                  </div>
+                  <div className="px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO</p>
+                    <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
+                      {noHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
+                    </p>
+                  </div>
                 </div>
-                <div className="px-4 py-3">
-                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES</p>
-                  <p className="text-xl font-mono font-medium tabular-nums text-green-500">
-                    {yesHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
-                  </p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES Avg Cost</p>
-                  <p className={`text-xl font-mono font-medium tabular-nums ${yesHeld > 0 ? "text-green-500" : "text-muted-foreground/60"}`}>
-                    {yesHeld > 0 && state.yes_avg_cost !== null ? state.yes_avg_cost.toFixed(2) : "—"}
-                    {yesHeld > 0 && state.yes_avg_cost !== null && (
-                      <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
-                    )}
-                  </p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO</p>
-                  <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
-                    {noHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
-                  </p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO Avg Cost</p>
-                  <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
-                    {noHeld > 0 && state.no_avg_cost !== null ? state.no_avg_cost.toFixed(2) : "—"}
-                    {noHeld > 0 && state.no_avg_cost !== null && (
-                      <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
-                    )}
-                  </p>
+                <div className="grid grid-cols-3 divide-x divide-border">
+                  <div className="px-4 py-3" />
+                  <div className="px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES Avg Cost</p>
+                    <p className={`text-xl font-mono font-medium tabular-nums ${yesHeld > 0 ? "text-green-500" : "text-muted-foreground/60"}`}>
+                      {yesHeld > 0 && state.yes_avg_cost !== null ? state.yes_avg_cost.toFixed(2) : "—"}
+                      {yesHeld > 0 && state.yes_avg_cost !== null && (
+                        <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO Avg Cost</p>
+                    <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
+                      {noHeld > 0 && state.no_avg_cost !== null ? state.no_avg_cost.toFixed(2) : "—"}
+                      {noHeld > 0 && state.no_avg_cost !== null && (
+                        <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                      )}
+                    </p>
+                  </div>
                 </div>
               </div>
               {(() => {
