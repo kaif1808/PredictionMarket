@@ -7,19 +7,19 @@ from analysis.load import SessionFrames
 
 
 def test_recompute_round_benchmark_matches_appendix_example() -> None:
-    # Appendix A example in the bible: posterior should be about 0.776.
+    # With informed-only draws at theta=0.85, repeated H signals push benchmark higher.
     signals = pd.DataFrame(
         [
             {"signal_value": "H", "theta": 0.85},
             {"signal_value": "L", "theta": 0.85},
-            {"signal_value": "H", "theta": 0.65},
-            {"signal_value": "H", "theta": 0.65},
-            {"signal_value": "L", "theta": 0.65},
-            {"signal_value": "H", "theta": 0.65},
+            {"signal_value": "H", "theta": 0.85},
+            {"signal_value": "H", "theta": 0.85},
+            {"signal_value": "L", "theta": 0.85},
+            {"signal_value": "H", "theta": 0.85},
         ]
     )
     out = recompute_round_benchmark(signals, prior=0.5)
-    assert 0.775 < out < 0.777
+    assert 0.96 < out < 0.98
 
 
 def test_recompute_session_benchmark_table() -> None:
@@ -30,7 +30,7 @@ def test_recompute_session_benchmark_table() -> None:
         trades=pd.DataFrame([]),
         signals=pd.DataFrame(
             [
-                {"round_id": 101, "signal_value": "H", "theta": 0.65},
+                {"round_id": 101, "signal_value": "H", "theta": 0.85},
             ]
         ),
         market_roles=pd.DataFrame([]),

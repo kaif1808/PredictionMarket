@@ -137,13 +137,10 @@ def get_bulletin(scenario_id: str, round_number: int, role_tier: str, stage: int
 
     if role_tier == "uninformed":
         return {"public": bullet["public"], "analytical": None, "intelligence": None}
-    if role_tier == "semi_informed":
-        return {"public": bullet["public"], "analytical": bullet["analytical"], "intelligence": None}
-    if role_tier == "insider":
+    if role_tier == "informed":
         return {
             "public": bullet["public"],
             "analytical": bullet["analytical"],
             "intelligence": bullet["intelligence"],
         }
     raise ValueError(f"Unknown role_tier={role_tier}")
-

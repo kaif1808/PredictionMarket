@@ -18,7 +18,7 @@ def main() -> None:
         df["return_ratio"] = (df["final_balance"] - df["endowment_tokens"]) / df["endowment_tokens"]
 
     args.outdir.mkdir(parents=True, exist_ok=True)
-    order = ["uninformed", "semi_informed", "insider"]
+    order = ["uninformed", "informed"]
     data = [df.loc[df["role_tier"] == role, "return_ratio"].dropna().values for role in order]
 
     plt.figure(figsize=(7, 4))

@@ -209,8 +209,11 @@ export default function TradingView() {
           balance: payload.balance,
           yes_held: payload.yes_held,
           no_held: payload.no_held,
+          yes_avg_cost: payload.yes_avg_cost,
+          no_avg_cost: payload.no_avg_cost,
           bulletin: payload.bulletin,
-          posterior: payload.posterior
+          signal_value: payload.signal_value,
+          signal_theta: payload.signal_theta
         };
         roundKeyRef.current = `${nextState.current_market_number}:${nextState.current_round_number}`;
         return nextState;
@@ -545,32 +548,22 @@ export default function TradingView() {
                 lockedMsg="Intelligence briefs are restricted to senior analysts."
               />
 
-              {/* Private posterior */}
-              {state.posterior !== null && state.posterior !== undefined && (
+              {/* Private signal */}
+              {state.signal_value !== null && state.signal_theta !== null && (
                 <div className="border-t border-border pt-5 mt-1">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <span className="w-1 h-1 rounded-full bg-amber-400 inline-block" />
                       <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-400/60">
-                        Private Assessment
+                        Private Signal
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-baseline gap-3 mb-3">
-                    <span className="text-[11px] font-mono text-muted-foreground/40 uppercase tracking-[0.1em]">P(YES | signals)</span>
-                    <span className="text-3xl font-mono font-semibold text-amber-300 tabular-nums">
-                      {pct(state.posterior)}
-                    </span>
-                  </div>
-                  <div className="relative h-px bg-amber-500/10 overflow-visible mb-1">
-                    <div
-                      className="absolute top-0 left-0 h-full bg-amber-400/60 transition-all duration-700"
-                      style={{ width: pct(state.posterior) }}
-                    />
-                    <div className="absolute top-[-3px] h-[7px] w-px bg-amber-300/30" style={{ left: "50%" }} />
-                  </div>
-                  <p className="text-[10px] font-mono text-muted-foreground/35 mt-2.5 leading-relaxed">
-                    Your private signal posterior — not visible to other participants.
+                  <p className="text-sm text-amber-300/90 mb-2" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+                    Your private signal this round: <strong>{state.signal_value}</strong> (θ = {state.signal_theta.toFixed(2)})
+                  </p>
+                  <p className="text-[10px] font-mono text-muted-foreground/35 leading-relaxed">
+                    High signals occur with probability θ when the true outcome is YES, and with probability 1−θ when NO. We do not compute the updated probability for you.
                   </p>
                 </div>
               )}
@@ -582,11 +575,23 @@ export default function TradingView() {
             {/* Position */}
             <div>
               <SectionLabel>Position</SectionLabel>
-              <div className="grid grid-cols-3 divide-x divide-border border border-border">
+              <div className="grid grid-cols-5 divide-x divide-border border border-border">
                 {[
                   { label: "Balance", value: balance.toFixed(1), unit: "T", color: "" },
                   { label: "YES", value: String(yesHeld), unit: "contracts", color: "text-green-500" },
+                  {
+                    label: "YES Avg Cost",
+                    value: yesHeld > 0 && state.yes_avg_cost !== null ? state.yes_avg_cost.toFixed(2) : "—",
+                    unit: yesHeld > 0 && state.yes_avg_cost !== null ? "T" : "",
+                    color: yesHeld > 0 ? "text-green-500" : "text-muted-foreground/60"
+                  },
                   { label: "NO",  value: String(noHeld),  unit: "contracts", color: noHeld > 0 ? "text-red-500" : "text-muted-foreground/60" },
+                  {
+                    label: "NO Avg Cost",
+                    value: noHeld > 0 && state.no_avg_cost !== null ? state.no_avg_cost.toFixed(2) : "—",
+                    unit: noHeld > 0 && state.no_avg_cost !== null ? "T" : "",
+                    color: noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"
+                  },
                 ].map(({ label, value, unit, color }) => (
                   <div key={label} className="px-4 py-3.5">
                     <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1.5">{label}</p>

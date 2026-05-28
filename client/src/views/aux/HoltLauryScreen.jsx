@@ -18,9 +18,10 @@ const HL_ROWS = Array.from({ length: 10 }, (_, i) => {
 export default function HoltLauryScreen() {
   const navigate = useNavigate();
   const [choices, setChoices] = useState(() =>
-    Object.fromEntries(HL_ROWS.map((r) => [r.n, "A"]))
+    Object.fromEntries(HL_ROWS.map((r) => [r.n, null]))
   );
   const [warning, setWarning] = useState(false);
+  const [validationError, setValidationError] = useState("");
 
   function isMonotone() {
     let sawB = false;
@@ -37,6 +38,13 @@ export default function HoltLauryScreen() {
   );
 
   async function handleSubmit() {
+    const firstIncomplete = HL_ROWS.find((row) => choices[row.n] !== "A" && choices[row.n] !== "B");
+    if (firstIncomplete) {
+      setValidationError(`Please answer row ${firstIncomplete.n} before submitting.`);
+      return;
+    }
+    setValidationError("");
+
     const monotone = isMonotone();
     if (!monotone) {
       setWarning(true);
@@ -100,7 +108,11 @@ export default function HoltLauryScreen() {
                       name={`row-${row.n}`}
                       className="sr-only"
                       checked={sel === opt}
-                      onChange={() => { setChoices((c) => ({ ...c, [row.n]: opt })); setWarning(false); }}
+                      onChange={() => {
+                        setChoices((c) => ({ ...c, [row.n]: opt }));
+                        setWarning(false);
+                        setValidationError("");
+                      }}
                     />
                     <div
                       className={`w-4 h-4 border flex items-center justify-center transition-colors ${
@@ -122,6 +134,13 @@ export default function HoltLauryScreen() {
         <p className="text-[10px] font-mono text-muted-foreground mb-4">
           Switch point: row {switchPoint} — switching from A to B at {switchPoint * 10}% probability.
         </p>
+      )}
+
+      {validationError && (
+        <div className="flex items-start gap-2 border border-red-500/25 bg-red-500/5 px-4 py-3 mb-4">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+          <p className="text-xs font-mono text-red-400">{validationError}</p>
+        </div>
       )}
 
       {warning && (

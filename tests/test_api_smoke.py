@@ -10,6 +10,25 @@ from server.db_models import DebriefResponse, Market, ParticipantSession, Sessio
 from server.server import fastapi_app, orchestrator
 
 
+def test_create_session_defaults_subject_count_to_9() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "default-subject-count", "rotation_id": 1},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(ParticipantSession).where(ParticipantSession.session_id == session_id)
+        ).all()
+    assert len(rows) == 9
+
+
 def test_create_session_liquidity_defaults_to_36_and_new_market_inherits() -> None:
     client = TestClient(fastapi_app)
     auth = ("admin", "admin")

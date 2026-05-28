@@ -33,6 +33,7 @@ from server.events import (
     TradeRequest,
 )
 from server import lmsr
+from server.portfolio import compute_market_avg_costs
 from server.orchestrator import Orchestrator, SessionPhase
 from server.scenarios import get_bulletin
 
@@ -104,7 +105,7 @@ class JoinRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     label: str
     rotation_id: int = 1
-    subject_count: int = Field(default=16, ge=1, le=20)
+    subject_count: int = Field(default=9, ge=1, le=20)
     lmsr_b_parameter: float = Field(default=36.0, gt=0)
 
 
@@ -265,7 +266,8 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         ).first()
 
     role = None
-    posterior = None
+    signal_value = None
+    signal_theta = None
     if market is not None:
         role = db.get(MarketRole, {"market_id": market.id, "participant_id": participant_id})
     if round_row is not None:
@@ -273,7 +275,24 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
             select(Signal).where(Signal.round_id == round_row.id, Signal.participant_id == participant_id)
         ).first()
         if signal is not None and signal.delivered:
-            posterior = float(signal.posterior)
+            signal_value = signal.signal_value
+            signal_theta = float(signal.theta)
+
+    yes_avg_cost = None
+    no_avg_cost = None
+    if market is not None:
+        market_trades = db.scalars(
+            select(Trade)
+            .join(Round, Trade.round_id == Round.id)
+            .where(
+                Round.market_id == market.id,
+                Trade.participant_id == participant_id,
+            )
+            .order_by(Trade.id.asc())
+        ).all()
+        yes_trades = [t for t in market_trades if t.direction == "yes"]
+        no_trades = [t for t in market_trades if t.direction == "no"]
+        yes_avg_cost, no_avg_cost = compute_market_avg_costs(yes_trades=yes_trades, no_trades=no_trades)
 
     flow = db.get(ParticipantSession, {"session_id": session_id, "participant_id": participant_id})
     bulletin = None
@@ -308,11 +327,14 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         "balance": float(role.starting_balance) if role else None,
         "yes_held": float(role.yes_held) if role else None,
         "no_held": float(role.no_held) if role else None,
+        "yes_avg_cost": yes_avg_cost,
+        "no_avg_cost": no_avg_cost,
         "current_price": (
             lmsr.price(float(market.q_yes), float(market.q_no), float(market.b_parameter)) if market else 0.5
         ),
         "bulletin": bulletin,
-        "posterior": posterior,
+        "signal_value": signal_value,
+        "signal_theta": signal_theta,
         "round_deadline_unix_ms": round_deadline_unix_ms,
     }
 
@@ -423,9 +445,24 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
             role_tier=role.role_tier,
             stage=market.stage,
         )
-        posterior = None
+        signal_value = None
+        signal_theta = None
         if signal is not None and signal.delivered:
-            posterior = float(signal.posterior)
+            signal_value = signal.signal_value
+            signal_theta = float(signal.theta)
+
+        participant_trades = db.scalars(
+            select(Trade)
+            .join(Round, Trade.round_id == Round.id)
+            .where(
+                Round.market_id == market.id,
+                Trade.participant_id == participant_id,
+            )
+            .order_by(Trade.id.asc())
+        ).all()
+        yes_trades = [t for t in participant_trades if t.direction == "yes"]
+        no_trades = [t for t in participant_trades if t.direction == "no"]
+        yes_avg_cost, no_avg_cost = compute_market_avg_costs(yes_trades=yes_trades, no_trades=no_trades)
 
         event = RoundStartedEvent(
             round_number=round_row.round_number,
@@ -434,8 +471,11 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
             balance=float(role.starting_balance),
             yes_held=float(role.yes_held),
             no_held=float(role.no_held),
+            yes_avg_cost=yes_avg_cost,
+            no_avg_cost=no_avg_cost,
             bulletin=bulletin,
-            posterior=posterior,
+            signal_value=signal_value,
+            signal_theta=signal_theta,
             round_deadline_unix_ms=deadline_ms,
         )
         await sio.emit("round_started", event.model_dump(), room=_room_participant(session_id, participant_id))

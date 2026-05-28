@@ -13,7 +13,7 @@ const QUESTIONS = [
   },
   {
     id: "q2",
-    prompt: "Do uninformed participants receive a private posterior value?",
+    prompt: "Do uninformed participants receive a private signal each round?",
     options: ["Yes", "No"],
     answer: "No",
   },

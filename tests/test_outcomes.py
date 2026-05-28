@@ -6,8 +6,8 @@ import pytest
 from analysis.load import SessionFrames
 from analysis.outcomes import (
     convergence_speed,
+    informed_returns,
     information_revelation_correlation,
-    insider_returns,
     price_accuracy,
     price_impact,
     return_inequality,
@@ -62,7 +62,7 @@ def _frames() -> SessionFrames:
                 {
                     "market_id": 11,
                     "participant_id": "P01",
-                    "role_tier": "insider",
+                    "role_tier": "informed",
                     "endowment_tokens": 100.0,
                     "final_balance": 120.0,
                 },
@@ -96,7 +96,7 @@ def test_outcome_shapes_and_core_values() -> None:
     assert len(impacts) == 2
     assert all(col in impacts.columns for col in ["price_impact", "abs_price_impact"])
 
-    returns = insider_returns(frames)
+    returns = informed_returns(frames)
     p01 = returns[returns["participant_id"] == "P01"].iloc[0]
     assert float(p01["return_tokens"]) == 20.0
 

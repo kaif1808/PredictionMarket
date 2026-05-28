@@ -19,6 +19,14 @@ def test_app_trade_route_serves_spa_shell_on_get() -> None:
     assert "<!doctype html" in res.text.lower()
 
 
+def test_app_instructions_route_serves_spa_shell_on_get() -> None:
+    client = TestClient(fastapi_app)
+    res = client.get("/app/instructions")
+    assert res.status_code == 200
+    assert "text/html" in res.headers.get("content-type", "")
+    assert "<!doctype html" in res.text.lower()
+
+
 def test_post_trade_still_uses_api_contract() -> None:
     client = TestClient(fastapi_app)
     res = client.post("/trade", json={"direction": "yes", "quantity": 1})

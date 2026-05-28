@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "[1/8] Running backend tests"
-pytest
+pytest tests
 
 echo "[2/8] Typechecking frontend contract path"
 (

@@ -20,7 +20,7 @@ class MarketStartedEvent(BaseModel):
     market_number: int
     stage: int
     scenario_description: str
-    role_tier: Literal["uninformed", "semi_informed", "insider"]
+    role_tier: Literal["uninformed", "informed"]
     endowment_tokens: float
     starting_balance: float
     current_price: float
@@ -34,8 +34,11 @@ class RoundStartedEvent(BaseModel):
     balance: float
     yes_held: float
     no_held: float
+    yes_avg_cost: float | None = None
+    no_avg_cost: float | None = None
     bulletin: BulletinPayload
-    posterior: float | None = None
+    signal_value: Literal["H", "L"] | None = None
+    signal_theta: float | None = None
     round_deadline_unix_ms: int
 
 

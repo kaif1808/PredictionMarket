@@ -42,7 +42,7 @@ def price_path_deviation(frames: SessionFrames) -> pd.DataFrame:
     return rounds[["market_id", "round_number", "abs_deviation"]]
 
 
-def insider_returns(frames: SessionFrames) -> pd.DataFrame:
+def informed_returns(frames: SessionFrames) -> pd.DataFrame:
     roles = frames.market_roles.copy()
     if roles.empty:
         return pd.DataFrame(columns=["market_id", "participant_id", "role_tier", "return_tokens", "return_ratio"])

@@ -1,4 +1,4 @@
-export type RoleTier = "uninformed" | "semi_informed" | "insider";
+export type RoleTier = "uninformed" | "informed";
 
 export interface BulletinPayload {
   public: string;
@@ -13,8 +13,11 @@ export interface RoundStartedEvent {
   balance: number;
   yes_held: number;
   no_held: number;
+  yes_avg_cost: number | null;
+  no_avg_cost: number | null;
   bulletin: BulletinPayload;
-  posterior: number | null;
+  signal_value: "H" | "L" | null;
+  signal_theta: number | null;
   round_deadline_unix_ms: number;
 }
 
@@ -65,9 +68,12 @@ export interface ParticipantState {
   balance: number | null;
   yes_held: number | null;
   no_held: number | null;
+  yes_avg_cost: number | null;
+  no_avg_cost: number | null;
   current_price: number;
   bulletin: BulletinPayload | null;
-  posterior: number | null;
+  signal_value: "H" | "L" | null;
+  signal_theta: number | null;
   round_deadline_unix_ms: number | null;
 }
 

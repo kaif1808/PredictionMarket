@@ -268,7 +268,7 @@ def main() -> None:
     parser.add_argument("--admin-user", default="admin")
     parser.add_argument("--admin-pass", default="admin")
     parser.add_argument("--sessions", type=int, default=2)
-    parser.add_argument("--subject-count", type=int, default=16)
+    parser.add_argument("--subject-count", type=int, default=9)
     parser.add_argument("--trades-per-participant", type=int, default=1)
     parser.add_argument("--require-state-sync-ratio", type=float, default=1.0)
     parser.add_argument("--require-price-update-ratio", type=float, default=1.0)

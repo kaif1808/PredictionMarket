@@ -90,7 +90,7 @@ def _run_reconnect_probe(
     base_url: str,
     admin_user: str,
     admin_pass: str,
-    subject_count: int = 8,
+    subject_count: int = 9,
     latency_budget_ms: float = 5000.0,
 ) -> dict[str, Any]:
     auth = (admin_user, admin_pass)
@@ -296,7 +296,7 @@ def main() -> int:
     parser.add_argument("--admin-user", default="admin")
     parser.add_argument("--admin-pass", default="admin")
     parser.add_argument("--sessions", type=int, default=2)
-    parser.add_argument("--subject-count", type=int, default=16)
+    parser.add_argument("--subject-count", type=int, default=9)
     parser.add_argument("--trades-per-participant", type=int, default=1)
     parser.add_argument("--require-state-sync-ratio", type=float, default=1.0)
     parser.add_argument("--require-price-update-ratio", type=float, default=1.0)

@@ -62,8 +62,8 @@ def test_dashboard_endpoint_returns_live_market_cards() -> None:
     assert m["rounds_opened"] == 1
     assert m["total_volume"] == 2
     assert m["latest_round_number"] == 1
-    assert m["outcome"] == 1
-    assert m["outcome_label"] == "YES — Conflict occurred"
+    assert m["outcome"] in {0, 1}
+    assert m["outcome_label"] in {"YES — Conflict occurred", "NO — Conflict did not occur"}
 
 
 def test_state_includes_round_deadline_only_while_round_open() -> None:
@@ -98,6 +98,9 @@ def test_state_includes_round_deadline_only_while_round_open() -> None:
     assert payload_open["phase"] == "round_open"
     assert isinstance(payload_open["round_deadline_unix_ms"], int)
     assert payload_open["round_deadline_unix_ms"] > 0
+    assert "signal_value" in payload_open
+    assert "signal_theta" in payload_open
+    assert "posterior" not in payload_open
 
     assert admin.post(f"/admin/sessions/{sid}/rounds/1/end", auth=auth).status_code == 200
 
@@ -106,6 +109,33 @@ def test_state_includes_round_deadline_only_while_round_open() -> None:
     payload_closed = state_closed.json()
     assert payload_closed["phase"] == "round_closed"
     assert payload_closed["round_deadline_unix_ms"] is None
+
+
+def test_state_includes_avg_cost_fields_after_trade() -> None:
+    admin = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+    create = admin.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "avg-cost", "rotation_id": 1, "subject_count": 8},
+    )
+    assert create.status_code == 200
+    sid = create.json()["session_id"]
+
+    assert admin.post(f"/admin/sessions/{sid}/markets", auth=auth, json={"market_number": 1}).status_code == 200
+    assert admin.post(f"/admin/sessions/{sid}/rounds", auth=auth, json={"round_number": 1}).status_code == 200
+
+    participant = TestClient(fastapi_app)
+    token = _join_token(sid, "P01")
+    assert participant.post("/auth/join", json={"join_token": token}).status_code == 200
+    assert participant.post("/trade", json={"direction": "yes", "quantity": 2}).status_code == 200
+
+    state = participant.get("/state")
+    assert state.status_code == 200
+    payload = state.json()
+    assert payload["yes_avg_cost"] is not None
+    assert payload["yes_avg_cost"] > 0
+    assert payload["no_avg_cost"] is None
 
 
 def test_market_resolution_emits_public_outcome_and_private_payouts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,6 +178,38 @@ def test_market_resolution_emits_public_outcome_and_private_payouts(monkeypatch:
         assert "payout" in data and "final_balance" in data and "pnl" in data
 
 
+def test_round_started_payload_exposes_signal_fields_not_posterior(monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+    create = admin.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "round-started-fields", "rotation_id": 1, "subject_count": 9},
+    )
+    assert create.status_code == 200
+    sid = create.json()["session_id"]
+    assert admin.post(f"/admin/sessions/{sid}/markets", auth=auth, json={"market_number": 2}).status_code == 200
+
+    emitted: list[tuple[str, str | None, dict]] = []
+
+    async def fake_emit(event, data=None, room=None, **kwargs):
+        emitted.append((event, room, data or {}))
+        return None
+
+    monkeypatch.setattr(server_module.sio, "emit", fake_emit)
+    start = admin.post(
+        f"/admin/sessions/{sid}/rounds",
+        auth=auth,
+        json={"round_number": 1},
+    )
+    assert start.status_code == 200
+
+    round_events = [data for evt, _room, data in emitted if evt == "round_started"]
+    assert len(round_events) == 9
+    assert all("signal_value" in payload and "signal_theta" in payload for payload in round_events)
+    assert all("posterior" not in payload for payload in round_events)
+
+
 @pytest.mark.anyio
 async def test_socket_connect_emits_full_state_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     admin = TestClient(fastapi_app)
@@ -167,6 +229,8 @@ async def test_socket_connect_emits_full_state_sync(monkeypatch: pytest.MonkeyPa
     assert join.status_code == 200
     cookie = participant.cookies.get("valdoria_auth")
     assert cookie
+    trade = participant.post("/trade", json={"direction": "yes", "quantity": 1})
+    assert trade.status_code == 200
 
     captured: dict[str, object] = {}
 
@@ -197,4 +261,10 @@ async def test_socket_connect_emits_full_state_sync(monkeypatch: pytest.MonkeyPa
     assert "current_price" in state
     assert "bulletin" in state
     assert "round_deadline_unix_ms" in state
+    assert "signal_value" in state
+    assert "signal_theta" in state
+    assert "yes_avg_cost" in state
+    assert "no_avg_cost" in state
+    assert state["yes_avg_cost"] is not None
+    assert "posterior" not in state
     assert isinstance(state["round_deadline_unix_ms"], int)

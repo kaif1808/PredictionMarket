@@ -13,8 +13,8 @@ from analysis.benchmark_recompute import recompute_session_benchmarks
 from analysis.metrics import price_path_deviation, round_volume, treatment_panel
 from analysis.outcomes import (
     convergence_speed,
+    informed_returns,
     information_revelation_correlation,
-    insider_returns,
     price_accuracy,
     price_impact,
     return_inequality,
@@ -40,7 +40,7 @@ def main() -> None:
     )
     price_accuracy(frames).to_csv(args.outdir / f"session_{args.session_id}_price_accuracy.csv", index=False)
     convergence_speed(frames).to_csv(args.outdir / f"session_{args.session_id}_convergence_speed.csv", index=False)
-    insider_returns(frames).to_csv(args.outdir / f"session_{args.session_id}_insider_returns.csv", index=False)
+    informed_returns(frames).to_csv(args.outdir / f"session_{args.session_id}_informed_returns.csv", index=False)
     return_inequality(frames).to_csv(args.outdir / f"session_{args.session_id}_return_inequality.csv", index=False)
     trading_volume(frames).to_csv(args.outdir / f"session_{args.session_id}_trading_volume.csv", index=False)
     price_impact(frames).to_csv(args.outdir / f"session_{args.session_id}_price_impact.csv", index=False)

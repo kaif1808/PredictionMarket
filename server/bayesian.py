@@ -99,11 +99,8 @@ def draw_for_round(
         if stage == 1:
             theta = 0.65
             delivered = False
-        elif role == "insider":
+        elif role == "informed":
             theta = 0.85
-            delivered = True
-        elif role == "semi_informed":
-            theta = 0.65
             delivered = True
         else:
             continue
@@ -126,4 +123,3 @@ def draw_for_round(
             )
         )
     return draws
-

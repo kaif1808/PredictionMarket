@@ -68,7 +68,7 @@ class MarketRole(Base):
     __tablename__ = "market_roles"
     __table_args__ = (
         PrimaryKeyConstraint("market_id", "participant_id", name="pk_market_role"),
-        CheckConstraint("role_tier IN ('uninformed','semi_informed','insider')", name="ck_role_tier"),
+        CheckConstraint("role_tier IN ('uninformed','informed')", name="ck_role_tier"),
     )
 
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"))

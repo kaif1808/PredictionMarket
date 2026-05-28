@@ -33,14 +33,14 @@ def test_posterior_converges_toward_truth() -> None:
 
 
 def test_benchmark_hand_check() -> None:
-    benchmark = bayesian.benchmark_price(0.5, [("H", 0.85), ("L", 0.65), ("H", 0.65)])
+    benchmark = bayesian.benchmark_price(0.5, [("H", 0.85), ("L", 0.85), ("H", 0.85)])
     assert 0.5 < benchmark < 0.95
 
 
 def test_draw_for_round_deterministic_seed() -> None:
     roles = [
-        ("P01", MarketAssignment(role_tier="semi_informed", endowment_tokens=100.0)),
-        ("P02", MarketAssignment(role_tier="insider", endowment_tokens=100.0)),
+        ("P01", MarketAssignment(role_tier="informed", endowment_tokens=100.0)),
+        ("P02", MarketAssignment(role_tier="informed", endowment_tokens=100.0)),
     ]
     d1 = bayesian.draw_for_round(
         session_id=1, market_id=2, round_id=3, market_roles=roles, true_outcome=1, stage=2
@@ -58,4 +58,3 @@ def test_stage_1_drawn_but_not_delivered() -> None:
     )
     assert len(draws) == 1
     assert draws[0].delivered is False
-

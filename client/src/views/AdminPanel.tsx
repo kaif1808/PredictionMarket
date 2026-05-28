@@ -14,7 +14,7 @@ type SessionRow = {
   closed_at: string | null;
 };
 type MarketTreatment = {
-  role_tier: "uninformed" | "semi_informed" | "insider";
+  role_tier: "uninformed" | "informed";
   endowment_tokens: number;
   information_treated: boolean;
   endowment_treated: boolean;
@@ -83,7 +83,7 @@ export default function AdminPanel() {
   const [exportText, setExportText] = useState("");
   const [marketNumber, setMarketNumber] = useState(1);
   const [roundNumber, setRoundNumber] = useState(1);
-  const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(16);
+  const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(9);
   const [newSessionLiquidity, setNewSessionLiquidity] = useState(36);
   const [tab, setTab] = useState<AdminTab>("control");
 
@@ -143,7 +143,7 @@ export default function AdminPanel() {
 
   async function createSession() {
     const label = `S${new Date().toISOString().slice(0, 10)}-A`;
-    const subjectCount = Math.max(1, Math.min(20, Math.trunc(newSessionSubjectCount || 16)));
+    const subjectCount = Math.max(1, Math.min(20, Math.trunc(newSessionSubjectCount || 9)));
     const liquidity = Number(newSessionLiquidity);
     if (!Number.isFinite(liquidity) || liquidity <= 0) {
       setMessage("Market liquidity must be greater than 0.");
@@ -367,6 +367,9 @@ export default function AdminPanel() {
                 <p className="text-[10px] font-mono text-muted-foreground">
                   Higher values reduce price movement per trade.
                 </p>
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  Informed per treated market: 3
+                </p>
                 <button
                   onClick={() => createSession().catch((err) => setMessage(err instanceof Error ? err.message : "Create failed"))}
                   className="w-full py-2.5 border border-border text-[11px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"
@@ -501,7 +504,7 @@ export default function AdminPanel() {
                               <>
                                 <p className="text-[9px] font-mono text-foreground">M{marketNumberCell}</p>
                                 <p className="text-[9px] font-mono text-muted-foreground">
-                                  {allocation.role_tier === "semi_informed" ? "semi" : allocation.role_tier}
+                                  {allocation.role_tier}
                                 </p>
                                 <p className="text-[9px] font-mono text-muted-foreground">
                                   I:{allocation.information_treated ? "Y" : "N"} E:{allocation.endowment_treated ? "Y" : "N"}
