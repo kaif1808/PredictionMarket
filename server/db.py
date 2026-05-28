@@ -17,7 +17,7 @@ if settings.database_url.startswith("sqlite"):
 
 engine = create_engine(settings.database_url, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-ALEMBIC_BASELINE_REVISION = "00058f3d1f5a"
+ALEMBIC_BASELINE_REVISION = "12d8e8c3f7a1"
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -32,6 +32,11 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
+    sessions_columns = {column["name"] for column in inspector.get_columns("sessions")} if "sessions" in table_names else set()
+    if "sessions" in table_names and "lmsr_b_parameter" not in sessions_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN lmsr_b_parameter NUMERIC(8,4) NOT NULL DEFAULT 36"))
+
     if "alembic_version" not in table_names:
         with engine.begin() as conn:
             conn.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"))
@@ -40,3 +45,12 @@ def init_db() -> None:
                 text("INSERT INTO alembic_version(version_num) VALUES (:version_num)"),
                 {"version_num": ALEMBIC_BASELINE_REVISION},
             )
+    else:
+        with engine.begin() as conn:
+            current_revision = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+            if current_revision != ALEMBIC_BASELINE_REVISION:
+                conn.execute(text("DELETE FROM alembic_version"))
+                conn.execute(
+                    text("INSERT INTO alembic_version(version_num) VALUES (:version_num)"),
+                    {"version_num": ALEMBIC_BASELINE_REVISION},
+                )

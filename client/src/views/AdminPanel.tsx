@@ -6,7 +6,13 @@ import {
 } from "lucide-react";
 
 type AdminAuth = { user: string; pass: string };
-type SessionRow = { session_id: number; label: string; rotation_id: number; closed_at: string | null };
+type SessionRow = {
+  session_id: number;
+  label: string;
+  rotation_id: number;
+  lmsr_b_parameter: number;
+  closed_at: string | null;
+};
 type MarketTreatment = {
   role_tier: "uninformed" | "semi_informed" | "insider";
   endowment_tokens: number;
@@ -76,6 +82,7 @@ export default function AdminPanel() {
   const [marketNumber, setMarketNumber] = useState(1);
   const [roundNumber, setRoundNumber] = useState(1);
   const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(16);
+  const [newSessionLiquidity, setNewSessionLiquidity] = useState(36);
   const [tab, setTab] = useState<AdminTab>("control");
 
   async function loadSessions() {
@@ -135,9 +142,14 @@ export default function AdminPanel() {
   async function createSession() {
     const label = `S${new Date().toISOString().slice(0, 10)}-A`;
     const subjectCount = Math.max(1, Math.min(20, Math.trunc(newSessionSubjectCount || 16)));
+    const liquidity = Number(newSessionLiquidity);
+    if (!Number.isFinite(liquidity) || liquidity <= 0) {
+      setMessage("Market liquidity must be greater than 0.");
+      return;
+    }
     const created = (await apiPost(
       "/admin/sessions",
-      { label, rotation_id: 1, subject_count: subjectCount },
+      { label, rotation_id: 1, subject_count: subjectCount, lmsr_b_parameter: liquidity },
       auth
     )) as { session_id: number };
     setSelectedSession(created.session_id);
@@ -322,7 +334,7 @@ export default function AdminPanel() {
                   >
                     <p className="text-[11px] font-mono text-foreground">#{s.session_id} · {s.label}</p>
                     <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                      {s.closed_at ? `Closed ${s.closed_at.slice(0, 10)}` : "Active"} · rotation {s.rotation_id}
+                      {s.closed_at ? `Closed ${s.closed_at.slice(0, 10)}` : "Active"} · rotation {s.rotation_id} · b={s.lmsr_b_parameter}
                     </p>
                   </button>
                 ))}
@@ -339,6 +351,20 @@ export default function AdminPanel() {
                   onChange={(e) => setNewSessionSubjectCount(Number(e.target.value))}
                   className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none"
                 />
+                <label className="block text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground pt-1">
+                  Market liquidity
+                </label>
+                <input
+                  type="number"
+                  min={0.1}
+                  step={0.1}
+                  value={newSessionLiquidity}
+                  onChange={(e) => setNewSessionLiquidity(Number(e.target.value))}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none"
+                />
+                <p className="text-[10px] font-mono text-muted-foreground">
+                  Higher values reduce price movement per trade.
+                </p>
                 <button
                   onClick={() => createSession().catch((err) => setMessage(err instanceof Error ? err.message : "Create failed"))}
                   className="w-full py-2.5 border border-border text-[11px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"

@@ -105,6 +105,7 @@ class CreateSessionRequest(BaseModel):
     label: str
     rotation_id: int = 1
     subject_count: int = Field(default=16, ge=1, le=20)
+    lmsr_b_parameter: float = Field(default=36.0, gt=0)
 
 
 class StartMarketRequest(BaseModel):
@@ -343,7 +344,10 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
 @fastapi_app.post("/admin/sessions")
 def create_session(payload: CreateSessionRequest, _: str = Depends(_admin_auth)) -> dict[str, int]:
     session_id = orchestrator.start_session(
-        label=payload.label, rotation_id=payload.rotation_id, subject_count=payload.subject_count
+        label=payload.label,
+        rotation_id=payload.rotation_id,
+        subject_count=payload.subject_count,
+        lmsr_b_parameter=payload.lmsr_b_parameter,
     )
     return {"session_id": session_id}
 
@@ -356,6 +360,7 @@ def list_sessions(_: str = Depends(_admin_auth), db: Session = Depends(get_db)) 
             "session_id": s.id,
             "label": s.session_label,
             "rotation_id": s.rotation_id,
+            "lmsr_b_parameter": float(s.lmsr_b_parameter),
             "closed_at": s.closed_at.isoformat() if s.closed_at else None,
         }
         for s in rows
@@ -822,6 +827,7 @@ def export_session_json(session_id: int, _: str = Depends(_admin_auth), db: Sess
             "id": session_row.id,
             "label": session_row.session_label,
             "rotation_id": session_row.rotation_id,
+            "lmsr_b_parameter": float(session_row.lmsr_b_parameter),
             "scenario_order": session_row.scenario_order,
             "created_at": session_row.created_at.isoformat(),
             "closed_at": session_row.closed_at.isoformat() if session_row.closed_at else None,

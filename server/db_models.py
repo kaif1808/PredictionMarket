@@ -22,6 +22,7 @@ class SessionModel(Base):
     rotation_id: Mapped[int] = mapped_column(Integer, nullable=False)
     scenario_order: Mapped[str] = mapped_column(Text, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    lmsr_b_parameter: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=Decimal("36"), server_default="36")
 
 
 class Participant(Base):

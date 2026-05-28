@@ -1,11 +1,96 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from server.db import SessionLocal
-from server.db_models import DebriefResponse, ParticipantSession
-from server.server import fastapi_app
+from server.db_models import DebriefResponse, Market, ParticipantSession, SessionModel
+from server.server import fastapi_app, orchestrator
+
+
+def test_create_session_liquidity_defaults_to_36_and_new_market_inherits() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "default-liquidity", "rotation_id": 1, "subject_count": 8},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    with SessionLocal() as db:
+        session_row = db.get(SessionModel, session_id)
+        assert session_row is not None
+        assert session_row.lmsr_b_parameter == Decimal("36")
+
+    start_market = client.post(
+        f"/admin/sessions/{session_id}/markets",
+        auth=auth,
+        json={"market_number": 1},
+    )
+    assert start_market.status_code == 200
+
+    with SessionLocal() as db:
+        market = db.scalar(
+            select(Market).where(Market.session_id == session_id, Market.market_number == 1)
+        )
+        assert market is not None
+        assert market.b_parameter == Decimal("36")
+
+
+def test_create_session_liquidity_override_is_stored_and_used_for_market() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "custom-liquidity", "rotation_id": 1, "subject_count": 8, "lmsr_b_parameter": 12.5},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    with SessionLocal() as db:
+        session_row = db.get(SessionModel, session_id)
+        assert session_row is not None
+        assert session_row.lmsr_b_parameter == Decimal("12.5")
+
+    previous_default = orchestrator.lmsr_b_parameter
+    try:
+        # Simulate a changed process-level default after session creation.
+        orchestrator.lmsr_b_parameter = 999.0
+        start_market = client.post(
+            f"/admin/sessions/{session_id}/markets",
+            auth=auth,
+            json={"market_number": 1},
+        )
+    finally:
+        orchestrator.lmsr_b_parameter = previous_default
+    assert start_market.status_code == 200
+
+    with SessionLocal() as db:
+        market = db.scalar(
+            select(Market).where(Market.session_id == session_id, Market.market_number == 1)
+        )
+        assert market is not None
+        assert market.b_parameter == Decimal("12.5")
+
+
+def test_create_session_rejects_non_positive_liquidity() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    for invalid_value in (0, -1):
+        create = client.post(
+            "/admin/sessions",
+            auth=auth,
+            json={"label": "invalid-liquidity", "rotation_id": 1, "subject_count": 8, "lmsr_b_parameter": invalid_value},
+        )
+        assert create.status_code == 422
 
 
 def test_session_happy_path_smoke() -> None:

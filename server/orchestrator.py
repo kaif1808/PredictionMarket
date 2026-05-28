@@ -71,12 +71,15 @@ class Orchestrator:
             raise ValueError(f"Unknown session_id={session_id}")
         return self.sessions[session_id]
 
-    def start_session(self, label: str, rotation_id: int, subject_count: int) -> int:
+    def start_session(self, label: str, rotation_id: int, subject_count: int, lmsr_b_parameter: float = 36.0) -> int:
+        if lmsr_b_parameter <= 0:
+            raise ValueError("lmsr_b_parameter must be > 0")
         with self.db_session_factory() as db:
             session = SessionModel(
                 session_label=label,
                 rotation_id=rotation_id,
                 scenario_order="C,A,B,D",
+                lmsr_b_parameter=Decimal(str(lmsr_b_parameter)),
             )
             db.add(session)
             db.flush()
@@ -115,7 +118,7 @@ class Orchestrator:
             market_cfg = get_market_config(
                 session_row.rotation_id,
                 market_number,
-                lmsr_b_parameter=self.lmsr_b_parameter,
+                lmsr_b_parameter=float(session_row.lmsr_b_parameter),
             )
             market = Market(
                 session_id=session_id,

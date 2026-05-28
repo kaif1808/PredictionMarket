@@ -404,10 +404,13 @@ export default function TradingView() {
   const yesHeld = Number(state.yes_held || 0);
   const noHeld = Number(state.no_held || 0);
   const held = direction === "yes" ? yesHeld : noHeld;
-  const maxQty = isSell ? held : 20;
+  const maxQty = 20;
   const balance = Number(state.balance || 0);
   const estCost = rawPrice * Number(quantity);
-  const canExecute = isSell ? held >= quantity : estCost <= balance;
+  const hasMinimumQuantity = quantity >= 1;
+  const hasSellInventory = held >= quantity;
+  const hasBuyBalance = estCost <= balance;
+  const canExecute = hasMinimumQuantity && (isSell ? hasSellInventory : hasBuyBalance);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -654,22 +657,29 @@ export default function TradingView() {
                         </p>
                       )}
                       <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-2.5">
-                        Quantity {isSell ? `(max ${maxQty})` : "(1–20)"}
+                        Quantity {isSell ? "(0–20)" : "(1–20)"}
                       </p>
                       <div className="flex items-center border border-border">
                         <button
                           type="button"
-                          onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                          onClick={() => setQuantity((q) => Math.max(0, q - 1))}
                           className="w-10 h-10 text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors text-lg font-light border-r border-border flex items-center justify-center"
                         >
                           −
                         </button>
                         <input
                           type="number"
-                          min={1}
+                          min={0}
                           max={maxQty}
                           value={quantity}
-                          onChange={(e) => setQuantity(Math.min(maxQty, Math.max(1, parseInt(e.target.value) || 1)))}
+                          onChange={(e) => {
+                            const parsed = parseInt(e.target.value, 10);
+                            if (Number.isNaN(parsed)) {
+                              setQuantity(0);
+                              return;
+                            }
+                            setQuantity(Math.min(maxQty, Math.max(0, parsed)));
+                          }}
                           className="flex-1 text-center bg-transparent py-2 font-mono text-base focus:outline-none text-foreground/90"
                         />
                         <button
@@ -703,7 +713,11 @@ export default function TradingView() {
                       <div className="flex items-center gap-2 px-4 py-2.5 bg-red-500/5 border-t border-red-500/15">
                         <AlertTriangle className="w-3 h-3 text-red-400/70 shrink-0" />
                         <span className="text-[10px] font-mono text-red-400/70">
-                          {isSell ? `No ${direction.toUpperCase()} contracts to sell` : "Insufficient balance"}
+                          {!hasMinimumQuantity
+                            ? "Enter at least 1 contract."
+                            : isSell
+                            ? "Not enough contracts to sell."
+                            : "Insufficient balance."}
                         </span>
                       </div>
                     )}
