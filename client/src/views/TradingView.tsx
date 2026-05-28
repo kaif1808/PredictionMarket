@@ -575,33 +575,55 @@ export default function TradingView() {
             {/* Position */}
             <div>
               <SectionLabel>Position</SectionLabel>
-              <div className="grid grid-cols-5 divide-x divide-border border border-border">
-                {[
-                  { label: "Balance", value: balance.toFixed(1), unit: "T", color: "" },
-                  { label: "YES", value: String(yesHeld), unit: "contracts", color: "text-green-500" },
-                  {
-                    label: "YES Avg Cost",
-                    value: yesHeld > 0 && state.yes_avg_cost !== null ? state.yes_avg_cost.toFixed(2) : "—",
-                    unit: yesHeld > 0 && state.yes_avg_cost !== null ? "T" : "",
-                    color: yesHeld > 0 ? "text-green-500" : "text-muted-foreground/60"
-                  },
-                  { label: "NO",  value: String(noHeld),  unit: "contracts", color: noHeld > 0 ? "text-red-500" : "text-muted-foreground/60" },
-                  {
-                    label: "NO Avg Cost",
-                    value: noHeld > 0 && state.no_avg_cost !== null ? state.no_avg_cost.toFixed(2) : "—",
-                    unit: noHeld > 0 && state.no_avg_cost !== null ? "T" : "",
-                    color: noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"
-                  },
-                ].map(({ label, value, unit, color }) => (
-                  <div key={label} className="px-4 py-3.5">
-                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1.5">{label}</p>
-                    <p className={`text-xl font-mono font-medium tabular-nums ${color || "text-foreground"}`}>
-                      {value}
-                      <span className="text-[10px] font-normal text-muted-foreground ml-1">{unit}</span>
+              <div className="border border-border divide-y divide-border">
+                <div className="px-4 py-3">
+                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">Balance</p>
+                  <p className="text-xl font-mono font-medium tabular-nums text-foreground">
+                    {balance.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES</p>
+                  <p className="text-xl font-mono font-medium tabular-nums text-green-500">
+                    {yesHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">YES Avg Cost</p>
+                  <p className={`text-xl font-mono font-medium tabular-nums ${yesHeld > 0 ? "text-green-500" : "text-muted-foreground/60"}`}>
+                    {yesHeld > 0 && state.yes_avg_cost !== null ? state.yes_avg_cost.toFixed(2) : "—"}
+                    {yesHeld > 0 && state.yes_avg_cost !== null && (
+                      <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                    )}
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO</p>
+                  <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
+                    {noHeld}<span className="text-[10px] font-normal text-muted-foreground ml-1">contracts</span>
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">NO Avg Cost</p>
+                  <p className={`text-xl font-mono font-medium tabular-nums ${noHeld > 0 ? "text-red-500" : "text-muted-foreground/60"}`}>
+                    {noHeld > 0 && state.no_avg_cost !== null ? state.no_avg_cost.toFixed(2) : "—"}
+                    {noHeld > 0 && state.no_avg_cost !== null && (
+                      <span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              {(() => {
+                const portfolioValue = balance + yesHeld * displayPrice + noHeld * (1 - displayPrice);
+                return (
+                  <div className="mt-2 border border-border bg-foreground/4 px-4 py-3">
+                    <p className="text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-1">Portfolio Value</p>
+                    <p className="text-xl font-mono font-semibold tabular-nums text-foreground">
+                      {portfolioValue.toFixed(1)}<span className="text-[10px] font-normal text-muted-foreground ml-1">T</span>
                     </p>
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </div>
 
             {/* Trade form */}
