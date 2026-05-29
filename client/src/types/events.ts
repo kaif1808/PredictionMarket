@@ -8,6 +8,8 @@ export interface BulletinPayload {
 
 export interface RoundStartedEvent {
   round_number: number;
+  is_practice_round: boolean;
+  round_duration_seconds: number;
   trading_open: boolean;
   current_price: number;
   balance: number;
@@ -75,6 +77,8 @@ export interface ParticipantState {
   bulletin: BulletinPayload | null;
   signal_value: "H" | "L" | null;
   signal_theta: number | null;
+  is_practice_round: boolean;
+  round_duration_seconds: number | null;
   round_deadline_unix_ms: number | null;
 }
 
@@ -82,6 +86,7 @@ export interface ServerToClientEvents {
   state_sync: (payload: ParticipantState) => void;
   market_started: (payload: {
     market_number: number;
+    is_practice: boolean;
     stage: number;
     scenario_description: string;
     role_tier: RoleTier;

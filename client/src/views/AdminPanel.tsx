@@ -38,6 +38,7 @@ type TournamentRow = {
 type DashboardMarket = {
   market_id: number;
   market_number: number;
+  is_practice: boolean;
   stage: number;
   scenario_id: string;
   current_price: number;
@@ -55,6 +56,7 @@ type DashboardResponse = {
   phase: string;
   current_market_number: number | null;
   current_round_number: number | null;
+  practice_round_active?: boolean;
   participant_count: number;
   markets: DashboardMarket[];
 };
@@ -445,6 +447,12 @@ export default function AdminPanel() {
                           Start Round {roundNumber}
                         </button>
                         <button
+                          onClick={() => action("/admin/sessions/{sid}/practice_round").catch((err) => setMessage(err instanceof Error ? err.message : "Action failed"))}
+                          className="py-2.5 border border-blue-500/30 bg-blue-500/10 text-[10px] font-mono uppercase tracking-[0.1em] text-blue-300 hover:bg-blue-500/15 transition-colors"
+                        >
+                          Run 45s Practice Round
+                        </button>
+                        <button
                           onClick={() => action(`/admin/sessions/${selectedSession}/rounds/${roundNumber}/end`).catch((err) => setMessage(err instanceof Error ? err.message : "Action failed"))}
                           className="py-2.5 border border-border text-[10px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"
                         >
@@ -581,6 +589,9 @@ export default function AdminPanel() {
                   {dashboard.current_market_number != null && (
                     <span> · Market {dashboard.current_market_number} · Round {dashboard.current_round_number ?? "—"}</span>
                   )}
+                  {dashboard.practice_round_active && (
+                    <span className="text-blue-300"> · Practice active</span>
+                  )}
                   <span> · {dashboard.participant_count} participants</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -588,7 +599,9 @@ export default function AdminPanel() {
                     <div key={m.market_id} className="border border-border p-5">
                       <div className="mb-4">
                         <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-muted-foreground">
-                          Market {m.market_number} · Stage {m.stage} · Scenario {m.scenario_id}
+                          {m.is_practice
+                            ? "Practice Market · Mechanics Only"
+                            : `Market ${m.market_number} · Stage ${m.stage} · Scenario ${m.scenario_id}`}
                         </span>
                       </div>
                       {m.outcome != null && (

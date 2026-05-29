@@ -18,6 +18,7 @@ class SessionStartedEvent(BaseModel):
 
 class MarketStartedEvent(BaseModel):
     market_number: int
+    is_practice: bool = False
     stage: int
     scenario_description: str
     role_tier: Literal["uninformed", "informed"]
@@ -29,6 +30,8 @@ class MarketStartedEvent(BaseModel):
 
 class RoundStartedEvent(BaseModel):
     round_number: int
+    is_practice_round: bool = False
+    round_duration_seconds: int = 90
     trading_open: bool = True
     current_price: float
     balance: float

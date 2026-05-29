@@ -61,12 +61,10 @@ function IntelPanel({
 }
 
 export default function TradingView() {
-  const ROUND_DURATION_SECONDS = 90;
-  const ROUND_DURATION_MS = ROUND_DURATION_SECONDS * 1000;
+  const DEFAULT_ROUND_DURATION_MS = 90 * 1000;
   const PRICE_TICK_MS = 250;
   const DISPLAY_TRANSITION_MS = 400;
   const STATE_FALLBACK_MS = 2500;
-  const MAX_TICKS = Math.floor(ROUND_DURATION_MS / PRICE_TICK_MS);
   const navigate = useNavigate();
   const [state, setState] = useState<ParticipantState | null>(null);
   const [direction, setDirection] = useState<"yes" | "no">("yes");
@@ -74,6 +72,7 @@ export default function TradingView() {
   const [pricePath, setPricePath] = useState<Array<{ elapsedSec: number; price: number }>>([]);
   const [deadlineMs, setDeadlineMs] = useState<number | null>(null);
   const [roundStartMs, setRoundStartMs] = useState<number | null>(null);
+  const [roundDurationMs, setRoundDurationMs] = useState<number>(DEFAULT_ROUND_DURATION_MS);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<"buy" | "sell">("buy");
@@ -90,16 +89,23 @@ export default function TradingView() {
   });
   const animationFrameRef = useRef<number | null>(null);
 
-  function elapsedSecToTick(elapsedSec: number): number {
-    return Math.max(0, Math.min(MAX_TICKS, Math.round((elapsedSec * 1000) / PRICE_TICK_MS)));
+  function elapsedSecToTick(elapsedSec: number, durationMs: number = roundDurationMs): number {
+    const maxTicks = Math.floor(durationMs / PRICE_TICK_MS);
+    return Math.max(0, Math.min(maxTicks, Math.round((elapsedSec * 1000) / PRICE_TICK_MS)));
   }
 
   function tickToElapsedSec(tick: number): number {
     return (tick * PRICE_TICK_MS) / 1000;
   }
 
-  function wallClockToTick(roundStartMs: number): number {
-    return Math.max(0, Math.min(MAX_TICKS, Math.floor((Date.now() - roundStartMs) / PRICE_TICK_MS)));
+  function wallClockToTick(roundStartMs: number, durationMs: number = roundDurationMs): number {
+    const maxTicks = Math.floor(durationMs / PRICE_TICK_MS);
+    return Math.max(0, Math.min(maxTicks, Math.floor((Date.now() - roundStartMs) / PRICE_TICK_MS)));
+  }
+
+  function toRoundDurationMs(participantState: ParticipantState | RoundStartedEvent): number {
+    const durationSeconds = participantState.round_duration_seconds ?? 90;
+    return Math.max(1, durationSeconds) * 1000;
   }
 
   function toRoundKey(participantState: ParticipantState): string | null {
@@ -136,10 +142,12 @@ export default function TradingView() {
   function seedChartFromState(participantState: ParticipantState) {
     const seedPrice = displayPriceRef.current;
     roundKeyRef.current = toRoundKey(participantState);
+    const nextRoundDurationMs = toRoundDurationMs(participantState);
+    setRoundDurationMs(nextRoundDurationMs);
     if (participantState.phase === "round_open" && participantState.round_deadline_unix_ms !== null) {
       const seedDeadlineMs = participantState.round_deadline_unix_ms;
-      const seedRoundStartMs = seedDeadlineMs - ROUND_DURATION_MS;
-      const seedElapsedSec = tickToElapsedSec(wallClockToTick(seedRoundStartMs));
+      const seedRoundStartMs = seedDeadlineMs - nextRoundDurationMs;
+      const seedElapsedSec = tickToElapsedSec(wallClockToTick(seedRoundStartMs, nextRoundDurationMs));
       setDeadlineMs(seedDeadlineMs);
       setRoundStartMs(seedRoundStartMs);
       setPricePath([{ elapsedSec: seedElapsedSec, price: seedPrice }]);
@@ -151,10 +159,12 @@ export default function TradingView() {
   }
 
   function syncRoundWindowFromState(participantState: ParticipantState) {
+    const nextRoundDurationMs = toRoundDurationMs(participantState);
+    setRoundDurationMs(nextRoundDurationMs);
     if (participantState.phase === "round_open" && participantState.round_deadline_unix_ms !== null) {
       const nextDeadlineMs = participantState.round_deadline_unix_ms;
       setDeadlineMs(nextDeadlineMs);
-      setRoundStartMs(nextDeadlineMs - ROUND_DURATION_MS);
+      setRoundStartMs(nextDeadlineMs - nextRoundDurationMs);
       return;
     }
     setDeadlineMs(null);
@@ -220,7 +230,9 @@ export default function TradingView() {
       });
       snapDisplayToPrice(payload.current_price);
       setDeadlineMs(payload.round_deadline_unix_ms);
-      const startedAtMs = payload.round_deadline_unix_ms - ROUND_DURATION_MS;
+      const nextRoundDurationMs = toRoundDurationMs(payload);
+      setRoundDurationMs(nextRoundDurationMs);
+      const startedAtMs = payload.round_deadline_unix_ms - nextRoundDurationMs;
       setRoundStartMs(startedAtMs);
       setPricePath([
         {
@@ -468,7 +480,7 @@ export default function TradingView() {
                   <XAxis
                     dataKey="elapsedSec"
                     type="number"
-                    domain={[0, ROUND_DURATION_SECONDS]}
+                    domain={[0, roundDurationMs / 1000]}
                     allowDataOverflow
                     tickFormatter={(value) => `${value}s`}
                     tick={{ fill: "var(--muted-foreground)", fontSize: 9, fontFamily: "JetBrains Mono, monospace" }}

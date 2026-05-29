@@ -51,6 +51,8 @@ class TradeResult:
 
 
 class Orchestrator:
+    PRACTICE_MARKET_NUMBER = 0
+
     def __init__(
         self,
         db_session_factory: sessionmaker[Session],
@@ -113,24 +115,43 @@ class Orchestrator:
         self.sessions[session.id] = SessionState(session_id=session.id, phase=SessionPhase.SESSION_OPEN)
         return session.id
 
-    def start_market(self, session_id: int, market_number: int) -> Market:
+    def start_market(self, session_id: int, market_number: int, is_practice: bool = False) -> Market:
         state = self._require_state(session_id)
         if state.phase not in {SessionPhase.SESSION_OPEN, SessionPhase.MARKET_RESOLVED}:
             raise ValueError("Cannot start market from current phase")
+        if is_practice and state.phase != SessionPhase.SESSION_OPEN:
+            raise ValueError("Cannot start practice round from current phase")
 
         with self.db_session_factory() as db:
             session_row = db.get(SessionModel, session_id)
             if session_row is None:
                 raise ValueError("Session not found")
 
-            market_cfg = get_market_config(
-                session_row.rotation_id,
-                market_number,
-                lmsr_b_parameter=float(session_row.lmsr_b_parameter),
-            )
+            if is_practice:
+                market_number = self.PRACTICE_MARKET_NUMBER
+                existing_practice_market = db.scalars(
+                    select(Market).where(
+                        Market.session_id == session_id,
+                        Market.market_number == self.PRACTICE_MARKET_NUMBER,
+                    )
+                ).first()
+                if existing_practice_market is not None:
+                    raise ValueError("Practice round already completed for this session")
+                market_cfg = get_market_config(
+                    session_row.rotation_id,
+                    1,
+                    lmsr_b_parameter=float(session_row.lmsr_b_parameter),
+                )
+            else:
+                market_cfg = get_market_config(
+                    session_row.rotation_id,
+                    market_number,
+                    lmsr_b_parameter=float(session_row.lmsr_b_parameter),
+                )
             market = Market(
                 session_id=session_id,
                 market_number=market_number,
+                is_practice=is_practice,
                 scenario_id=market_cfg.scenario_id,
                 true_probability=Decimal(str(market_cfg.true_probability)),
                 stage=market_cfg.stage,
@@ -146,7 +167,10 @@ class Orchestrator:
                 select(ParticipantSession.participant_id).where(ParticipantSession.session_id == session_id)
             ).all()
             for pid in participants:
-                assign = get_assignment(session_row.rotation_id, pid, market_number, len(participants))
+                if is_practice:
+                    assign = MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
+                else:
+                    assign = get_assignment(session_row.rotation_id, pid, market_number, len(participants))
                 db.add(
                     MarketRole(
                         market_id=market.id,
@@ -163,7 +187,14 @@ class Orchestrator:
         state.phase = SessionPhase.MARKET_OPEN
         state.current_market_number = market_number
         state.current_round_number = None
-        state.market_cache = {"market_id": market.id, "q_yes": 0.0, "q_no": 0.0, "b": float(market.b_parameter), "stage": market.stage}
+        state.market_cache = {
+            "market_id": market.id,
+            "q_yes": 0.0,
+            "q_no": 0.0,
+            "b": float(market.b_parameter),
+            "stage": market.stage,
+            "is_practice": bool(market.is_practice),
+        }
         return market
 
     def start_round(self, session_id: int, round_number: int) -> Round:
@@ -387,7 +418,11 @@ class Orchestrator:
                     func.count(MarketRole.market_id).label("markets_count"),
                 )
                 .join(Market, MarketRole.market_id == Market.id)
-                .where(Market.session_id == session_id, MarketRole.final_balance.is_not(None))
+                .where(
+                    Market.session_id == session_id,
+                    MarketRole.final_balance.is_not(None),
+                    Market.is_practice.is_(False),
+                )
                 .group_by(MarketRole.participant_id)
             )
             rows = db.execute(stmt).all()
@@ -479,6 +514,25 @@ class Orchestrator:
                         state.current_round_number = current_round.round_number
                         state.phase = SessionPhase.ROUND_OPEN
                 self.sessions[sess.id] = state
+
+    def close_practice_market(self, session_id: int) -> None:
+        state = self._require_state(session_id)
+        if state.current_market_number != self.PRACTICE_MARKET_NUMBER:
+            raise ValueError("No active practice market")
+        if state.phase not in {SessionPhase.MARKET_OPEN, SessionPhase.ROUND_CLOSED}:
+            raise ValueError("Cannot close practice market from current phase")
+
+        with self.db_session_factory() as db:
+            market = self._current_market_row(db, session_id, state.current_market_number)
+            if market is None or not bool(market.is_practice):
+                raise ValueError("No active practice market")
+            market.closed_at = datetime.now(timezone.utc)
+            db.commit()
+
+        state.phase = SessionPhase.SESSION_OPEN
+        state.current_market_number = None
+        state.current_round_number = None
+        state.market_cache = {}
 
     @staticmethod
     def _draw_market_truth(session_id: int, market_id: int, true_probability: float) -> int:
