@@ -71,7 +71,14 @@ class Orchestrator:
             raise ValueError(f"Unknown session_id={session_id}")
         return self.sessions[session_id]
 
-    def start_session(self, label: str, rotation_id: int, subject_count: int, lmsr_b_parameter: float = 36.0) -> int:
+    def start_session(
+        self,
+        label: str,
+        rotation_id: int,
+        subject_count: int,
+        lmsr_b_parameter: float = 36.0,
+        show_tournament_payout_screen: bool = True,
+    ) -> int:
         if lmsr_b_parameter <= 0:
             raise ValueError("lmsr_b_parameter must be > 0")
         with self.db_session_factory() as db:
@@ -80,6 +87,7 @@ class Orchestrator:
                 rotation_id=rotation_id,
                 scenario_order="C,A,B,D",
                 lmsr_b_parameter=Decimal(str(lmsr_b_parameter)),
+                show_tournament_payout_screen=show_tournament_payout_screen,
             )
             db.add(session)
             db.flush()

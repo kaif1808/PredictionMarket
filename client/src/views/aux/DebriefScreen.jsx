@@ -3,8 +3,24 @@ import { apiGet, apiPost } from "../../lib/api";
 import { SectionLabel } from "../../components/SectionLabel";
 import { Award, CheckCircle } from "lucide-react";
 
+const DEBRIEF_QUESTIONS = [
+  {
+    id: "experimental_economics",
+    prompt: "Did you know anything about experimental economics before this session?",
+  },
+  {
+    id: "prediction_market_literature",
+    prompt: "Were you familiar with the literature around prediction markets before today?",
+  },
+  {
+    id: "prediction_market_use",
+    prompt: "Had you ever used a prediction market such as Polymarket or Kalshi before this study?",
+  },
+];
+
 export default function DebriefScreen() {
   const [strategy, setStrategy] = useState("");
+  const [quizAnswers, setQuizAnswers] = useState(/** @type {Record<string, string>} */ ({}));
   const [submitted, setSubmitted] = useState(false);
   const [tournament, setTournament] = useState(/** @type {{ rank: number; total_tokens: number; prize_eur: number } | null} */ (null));
   const [error, setError] = useState("");
@@ -16,8 +32,13 @@ export default function DebriefScreen() {
   }, []);
 
   async function submit() {
+    const unanswered = DEBRIEF_QUESTIONS.filter((q) => !quizAnswers[q.id]);
+    if (unanswered.length > 0) {
+      setError("Please answer all background questions before submitting.");
+      return;
+    }
     try {
-      await apiPost("/debrief/submit", { answers: { strategy } });
+      await apiPost("/debrief/submit", { answers: { strategy, ...quizAnswers } });
       setSubmitted(true);
       setError("");
     } catch (err) {
@@ -87,11 +108,53 @@ export default function DebriefScreen() {
             <div className="space-y-3">
               <textarea
                 value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
+                onChange={(e) => {
+                  setStrategy(e.target.value);
+                  setError("");
+                }}
                 placeholder="Describe how you made trading decisions — what information did you rely on, what signals guided your choices?"
                 className="w-full h-32 bg-transparent border border-border px-4 py-3 text-sm text-foreground/85 placeholder:text-muted-foreground/50 focus:outline-none focus:border-foreground/50 resize-none transition-colors"
                 style={{ fontFamily: "Spectral, Georgia, serif" }}
               />
+              <div className="border border-border p-4 space-y-4">
+                <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-muted-foreground">
+                  Background quiz
+                </p>
+                {DEBRIEF_QUESTIONS.map((q) => (
+                  <div key={q.id} className="space-y-2">
+                    <p className="text-sm text-foreground/80" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+                      {q.prompt}
+                    </p>
+                    <div className="flex gap-2">
+                      {[
+                        { label: "Yes", value: "yes" },
+                        { label: "No", value: "no" },
+                      ].map((opt) => (
+                        <label
+                          key={opt.value}
+                          className={`flex items-center gap-2 px-3 py-1.5 border cursor-pointer transition-colors text-xs font-mono ${
+                            quizAnswers[q.id] === opt.value
+                              ? "border-foreground bg-foreground/8 text-foreground"
+                              : "border-border text-muted-foreground hover:border-foreground/40"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={q.id}
+                            value={opt.value}
+                            className="sr-only"
+                            onChange={() => {
+                              setQuizAnswers((a) => ({ ...a, [q.id]: opt.value }));
+                              setError("");
+                            }}
+                          />
+                          {opt.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
               <button
                 onClick={submit}
                 className="w-full py-3.5 bg-foreground text-background text-xs font-mono uppercase tracking-[0.2em] hover:opacity-90 transition-opacity"

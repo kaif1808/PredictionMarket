@@ -62,6 +62,7 @@ export interface ParticipantState {
   participant_id: string;
   flow_step: string | null;
   phase: string;
+  show_tournament_payout_screen: boolean;
   current_market_number: number | null;
   current_round_number: number | null;
   role_tier: RoleTier | null;

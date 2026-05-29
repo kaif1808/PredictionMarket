@@ -23,6 +23,7 @@ class SessionModel(Base):
     scenario_order: Mapped[str] = mapped_column(Text, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     lmsr_b_parameter: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=False, default=Decimal("36"), server_default="36")
+    show_tournament_payout_screen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
 
 class Participant(Base):

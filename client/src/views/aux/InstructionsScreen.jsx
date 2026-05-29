@@ -1,11 +1,26 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiPost } from "../../lib/api";
+import { apiGet, apiPost } from "../../lib/api";
 import { FlowShell } from "../../components/FlowShell";
 import { ChevronRight } from "lucide-react";
 import InstructionsScreenPreview from "./InstructionsScreen.preview";
 
 export default function InstructionsScreen() {
   const navigate = useNavigate();
+  const [showTournamentPayoutScreen, setShowTournamentPayoutScreen] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    apiGet("/state")
+      .then((state) => {
+        if (!active) return;
+        setShowTournamentPayoutScreen(state.show_tournament_payout_screen !== false);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function goQuiz() {
     await apiPost("/flow_step", { flow_step: "quiz" });
@@ -41,12 +56,14 @@ export default function InstructionsScreen() {
           <InstructionsScreenPreview />
         </div>
 
-        <div className="border border-border p-4">
-          <p className="text-sm font-mono text-foreground mb-2">5. Tournament and payouts</p>
-          <p className="text-sm leading-relaxed text-foreground/75" style={{ fontFamily: "Spectral, Georgia, serif" }}>
-            Final ranking is based on total token balances across all markets. Top prizes are: rank 1 = 5 EUR, rank 2 = 3 EUR, rank 3 = 2 EUR.
-          </p>
-        </div>
+        {showTournamentPayoutScreen && (
+          <div className="border border-border p-4">
+            <p className="text-sm font-mono text-foreground mb-2">5. Tournament and payouts</p>
+            <p className="text-sm leading-relaxed text-foreground/75" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+              Final ranking is based on total token balances across all markets. Top prizes are: rank 1 = 5 EUR, rank 2 = 3 EUR, rank 3 = 2 EUR.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="border-t border-border pt-5">

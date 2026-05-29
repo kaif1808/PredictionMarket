@@ -107,6 +107,7 @@ class CreateSessionRequest(BaseModel):
     rotation_id: int = 1
     subject_count: int = Field(default=9, ge=1, le=20)
     lmsr_b_parameter: float = Field(default=36.0, gt=0)
+    show_tournament_payout_screen: bool = True
 
 
 class StartMarketRequest(BaseModel):
@@ -237,13 +238,13 @@ async def _emit_market_resolution(session_id: int, market_id: int, outcome: int,
 
 
 def _build_participant_state(db: Session, session_id: int, participant_id: str) -> dict[str, Any]:
+    session_row = db.get(SessionModel, session_id)
     try:
         state = orchestrator._require_state(session_id)
         phase = state.phase.value
         current_market_number = state.current_market_number
         current_round_number = state.current_round_number
     except ValueError:
-        session_row = db.get(SessionModel, session_id)
         phase = "session_closed" if session_row and session_row.closed_at else "idle"
         current_market_number = None
         current_round_number = None
@@ -319,6 +320,7 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         "participant_id": participant_id,
         "flow_step": flow.flow_step if flow else None,
         "phase": phase,
+        "show_tournament_payout_screen": session_row.show_tournament_payout_screen if session_row else True,
         "current_market_number": current_market_number,
         "current_round_number": current_round_number,
         "market_id": market.id if market else None,
@@ -376,6 +378,7 @@ def create_session(payload: CreateSessionRequest, _: str = Depends(_admin_auth))
         rotation_id=payload.rotation_id,
         subject_count=payload.subject_count,
         lmsr_b_parameter=payload.lmsr_b_parameter,
+        show_tournament_payout_screen=payload.show_tournament_payout_screen,
     )
     return {"session_id": session_id}
 
