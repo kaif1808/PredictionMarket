@@ -7,6 +7,7 @@ import type {
   ErrorEvent,
   MarketResolvedEvent,
   ParticipantState,
+  PrimingBulletin,
   PriceUpdateEvent,
   RoundStartedEvent
 } from "../types/events";
@@ -56,6 +57,54 @@ function IntelPanel({
       ) : (
         <p className="text-[11px] font-mono text-muted-foreground/30 italic">{lockedMsg}</p>
       )}
+    </div>
+  );
+}
+
+// ── MarketBriefing ─────────────────────────────────────────────────────────────
+function MarketBriefing({ priming, collapsed }: { priming: PrimingBulletin; collapsed?: boolean }) {
+  const tierAccent = {
+    public:       { bar: "bg-muted-foreground/25", label: "text-muted-foreground/50", icon: <Eye className="w-3 h-3" /> },
+    analytical:   { bar: "bg-cyan-500/50",          label: "text-cyan-400/60",          icon: <Shield className="w-3 h-3" /> },
+    intelligence: { bar: "bg-amber-500/50",         label: "text-amber-400/60",         icon: <Lock className="w-3 h-3" /> },
+  } as const;
+
+  if (collapsed) {
+    return (
+      <div className="mb-4 border-t border-border pt-4">
+        <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-muted-foreground/35">
+          Market Intelligence Briefing — {priming.sources.length} sources
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6 border border-border">
+      <div className="px-4 py-2.5 border-b border-border bg-foreground/[0.02]">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground/50">
+          Market Intelligence Briefing
+        </span>
+      </div>
+      <div className="divide-y divide-border">
+        {priming.sources.map((source, i) => {
+          const accent = tierAccent[source.tier];
+          return (
+            <div key={i} className="px-4 py-3 pl-5 relative">
+              <div className={`absolute left-0 top-3 bottom-3 w-0.5 ${accent.bar}`} />
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className={`${accent.label} flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.15em]`}>
+                  {accent.icon}
+                  {source.name}
+                </span>
+              </div>
+              <p className="text-[13px] leading-relaxed text-foreground/75" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+                {source.text}
+              </p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -286,6 +335,11 @@ export default function TradingView() {
       syncRoundWindowFromState(payload);
     }
 
+    function onMarketStarted(payload: { priming: PrimingBulletin | null }) {
+      setState((prev) => prev ? { ...prev, priming: payload.priming ?? null } : prev);
+    }
+
+    socket.on("market_started", onMarketStarted);
     socket.on("round_started", onRoundStarted);
     socket.on("price_update", onPriceUpdate);
     socket.on("round_ended", onRoundEnded);
@@ -295,6 +349,7 @@ export default function TradingView() {
     socket.on("error", onError);
 
     return () => {
+      socket.off("market_started", onMarketStarted);
       socket.off("round_started", onRoundStarted);
       socket.off("price_update", onPriceUpdate);
       socket.off("round_ended", onRoundEnded);
@@ -456,6 +511,9 @@ export default function TradingView() {
 
           {/* Left column */}
           <div>
+            {state.priming && !tradingOpen && state.phase === "market_open" && (
+              <MarketBriefing priming={state.priming} />
+            )}
             {/* Market price */}
             <div className="mb-5">
               <h2
@@ -538,6 +596,9 @@ export default function TradingView() {
 
             {/* Intel briefings */}
             <div className="space-y-0">
+              {state.priming && tradingOpen && (
+                <MarketBriefing priming={state.priming} collapsed />
+              )}
               <IntelPanel
                 tier="public"
                 title="Situation Report"

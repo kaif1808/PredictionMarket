@@ -11,6 +11,19 @@ class BulletinPayload(BaseModel):
     intelligence: str | None = None
 
 
+class PrimingSourcePayload(BaseModel):
+    source_type: str
+    name: str
+    tier: Literal["public", "analytical", "intelligence"]
+    lean: Literal["yes", "no", "neutral"]
+    text: str
+
+
+class PrimingBulletinPayload(BaseModel):
+    headline: str
+    sources: list[PrimingSourcePayload]
+
+
 class SessionStartedEvent(BaseModel):
     session_id: int
     session_label: str
@@ -26,6 +39,7 @@ class MarketStartedEvent(BaseModel):
     starting_balance: float
     current_price: float
     max_rounds: int = 5
+    priming: PrimingBulletinPayload | None = None
 
 
 class RoundStartedEvent(BaseModel):

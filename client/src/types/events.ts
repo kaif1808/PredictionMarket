@@ -1,5 +1,18 @@
 export type RoleTier = "uninformed" | "informed";
 
+export interface PrimingSource {
+  source_type: string;
+  name: string;
+  tier: "public" | "analytical" | "intelligence";
+  lean: "yes" | "no" | "neutral";
+  text: string;
+}
+
+export interface PrimingBulletin {
+  headline: string;
+  sources: PrimingSource[];
+}
+
 export interface BulletinPayload {
   public: string;
   analytical: string | null;
@@ -80,6 +93,7 @@ export interface ParticipantState {
   is_practice_round: boolean;
   round_duration_seconds: number | null;
   round_deadline_unix_ms: number | null;
+  priming: PrimingBulletin | null;
 }
 
 export interface ServerToClientEvents {
@@ -94,6 +108,7 @@ export interface ServerToClientEvents {
     starting_balance: number;
     current_price: number;
     max_rounds: number;
+    priming: PrimingBulletin | null;
   }) => void;
   round_started: (payload: RoundStartedEvent) => void;
   price_update: (payload: PriceUpdateEvent) => void;

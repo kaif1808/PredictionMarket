@@ -37,7 +37,7 @@ from server.events import (
 from server import lmsr
 from server.portfolio import compute_market_avg_costs
 from server.orchestrator import Orchestrator, SessionPhase
-from server.scenarios import get_bulletin
+from server.scenarios import get_bulletin, get_priming_bulletin
 
 
 settings = load_settings()
@@ -378,6 +378,14 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
             role_tier=role.role_tier,
             stage=market.stage,
         )
+    priming = None
+    if market is not None and role is not None and not market.is_practice:
+        priming = get_priming_bulletin(
+            scenario_id=market.scenario_id,
+            role_tier=role.role_tier,
+            stage=market.stage,
+            seed=f"{session_id}:{market.id}:priming",
+        )
     round_duration_seconds = None
     is_practice_round = _is_practice_market(market) and round_row is not None
     round_deadline_unix_ms = None
@@ -419,6 +427,7 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         "is_practice_round": is_practice_round,
         "round_duration_seconds": round_duration_seconds,
         "round_deadline_unix_ms": round_deadline_unix_ms,
+        "priming": priming,
     }
 
 
@@ -542,8 +551,15 @@ async def _emit_round_started_events(session_id: int, market: Market, round_row:
 async def start_market(session_id: int, payload: StartMarketRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
     market = orchestrator.start_market(session_id=session_id, market_number=payload.market_number)
     roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
+    priming_seed = f"{session_id}:{market.id}:priming"
     for role in roles:
         _set_flow_step(db, session_id, role.participant_id, f"market-{market.market_number}")
+        priming_dict = get_priming_bulletin(
+            scenario_id=market.scenario_id,
+            role_tier=role.role_tier,
+            stage=market.stage,
+            seed=priming_seed,
+        )
         event = MarketStartedEvent(
             market_number=market.market_number,
             is_practice=False,
@@ -554,6 +570,7 @@ async def start_market(session_id: int, payload: StartMarketRequest, _: str = De
             starting_balance=float(role.starting_balance),
             current_price=0.5,
             max_rounds=5,
+            priming=priming_dict,
         )
         await sio.emit(
             "market_started",
