@@ -17,7 +17,7 @@ if settings.database_url.startswith("sqlite"):
 
 engine = create_engine(settings.database_url, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-ALEMBIC_BASELINE_REVISION = "7f1c2a9b4d55"
+ALEMBIC_BASELINE_REVISION = "c4a1d9e8b6f2"
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -39,6 +39,9 @@ def init_db() -> None:
     if "sessions" in table_names and "show_tournament_payout_screen" not in sessions_columns:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE sessions ADD COLUMN show_tournament_payout_screen BOOLEAN NOT NULL DEFAULT TRUE"))
+    if "sessions" in table_names and "treated_count" not in sessions_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN treated_count INTEGER NOT NULL DEFAULT 3"))
 
     if "alembic_version" not in table_names:
         with engine.begin() as conn:

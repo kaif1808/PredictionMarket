@@ -29,6 +29,7 @@ from server.events import (
     MarketOutcomePublicEvent,
     MarketResolvedEvent,
     MarketStartedEvent,
+    PrimingBulletinPayload,
     PriceUpdateEvent,
     RoundEndedEvent,
     RoundStartedEvent,
@@ -114,6 +115,7 @@ class CreateSessionRequest(BaseModel):
     label: str
     rotation_id: int = 1
     subject_count: int = Field(default=9, ge=1, le=20)
+    treated_count: int = Field(default=3, ge=2, le=20)
     lmsr_b_parameter: float = Field(default=36.0, gt=0)
     show_tournament_payout_screen: bool = True
 
@@ -463,10 +465,13 @@ def auth_join(payload: JoinRequest, response: Response, db: Session = Depends(ge
 
 @fastapi_app.post("/admin/sessions")
 def create_session(payload: CreateSessionRequest, _: str = Depends(_admin_auth)) -> dict[str, int]:
+    if payload.treated_count > payload.subject_count:
+        raise HTTPException(status_code=422, detail="treated_count must be less than or equal to subject_count")
     session_id = orchestrator.start_session(
         label=payload.label,
         rotation_id=payload.rotation_id,
         subject_count=payload.subject_count,
+        treated_count=payload.treated_count,
         lmsr_b_parameter=payload.lmsr_b_parameter,
         show_tournament_payout_screen=payload.show_tournament_payout_screen,
     )
@@ -481,6 +486,7 @@ def list_sessions(_: str = Depends(_admin_auth), db: Session = Depends(get_db)) 
             "session_id": s.id,
             "label": s.session_label,
             "rotation_id": s.rotation_id,
+            "treated_count": s.treated_count,
             "lmsr_b_parameter": float(s.lmsr_b_parameter),
             "closed_at": s.closed_at.isoformat() if s.closed_at else None,
         }
@@ -551,15 +557,8 @@ async def _emit_round_started_events(session_id: int, market: Market, round_row:
 async def start_market(session_id: int, payload: StartMarketRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
     market = orchestrator.start_market(session_id=session_id, market_number=payload.market_number)
     roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
-    priming_seed = f"{session_id}:{market.id}:priming"
     for role in roles:
         _set_flow_step(db, session_id, role.participant_id, f"market-{market.market_number}")
-        priming_dict = get_priming_bulletin(
-            scenario_id=market.scenario_id,
-            role_tier=role.role_tier,
-            stage=market.stage,
-            seed=priming_seed,
-        )
         event = MarketStartedEvent(
             market_number=market.market_number,
             is_practice=False,
@@ -570,7 +569,7 @@ async def start_market(session_id: int, payload: StartMarketRequest, _: str = De
             starting_balance=float(role.starting_balance),
             current_price=0.5,
             max_rounds=5,
-            priming=priming_dict,
+            priming=None,
         )
         await sio.emit(
             "market_started",
@@ -579,6 +578,33 @@ async def start_market(session_id: int, payload: StartMarketRequest, _: str = De
         )
     db.commit()
     return {"market_id": market.id, "market_number": market.market_number, "stage": market.stage}
+
+
+@fastapi_app.post("/admin/sessions/{session_id}/markets/{market_number}/priming")
+async def send_priming_bulletin(session_id: int, market_number: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
+    market = db.scalar(
+        select(Market).where(Market.session_id == session_id, Market.market_number == market_number)
+    )
+    if market is None or market.is_practice:
+        raise HTTPException(status_code=404, detail="Market not found")
+    roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
+    priming_seed = f"{session_id}:{market.id}:priming"
+    sent = 0
+    for role in roles:
+        priming_dict = get_priming_bulletin(
+            scenario_id=market.scenario_id,
+            role_tier=role.role_tier,
+            stage=market.stage,
+            seed=priming_seed,
+        )
+        payload = PrimingBulletinPayload(**priming_dict)
+        await sio.emit(
+            "priming_bulletin",
+            payload.model_dump(),
+            room=_room_participant(session_id, role.participant_id),
+        )
+        sent += 1
+    return {"sent": sent}
 
 
 async def _finalize_practice_after_round_close(session_id: int) -> None:
@@ -1168,6 +1194,7 @@ def export_session_json(
             "id": session_row.id,
             "label": session_row.session_label,
             "rotation_id": session_row.rotation_id,
+            "treated_count": session_row.treated_count,
             "lmsr_b_parameter": float(session_row.lmsr_b_parameter),
             "scenario_order": session_row.scenario_order,
             "created_at": session_row.created_at.isoformat(),

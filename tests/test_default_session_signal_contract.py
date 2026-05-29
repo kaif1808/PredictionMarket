@@ -76,7 +76,7 @@ def test_default_session_nine_participants_and_signal_contracts() -> None:
         assert market4 is not None
         roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market4.id)).all()
     assert sum(1 for r in roles if r.role_tier == "informed") == 3
-    assert sum(1 for r in roles if r.endowment_tokens == 400) == 2
+    assert sum(1 for r in roles if r.endowment_tokens == 400) == 3
 
     with SessionLocal() as db:
         ended_rounds = db.scalars(

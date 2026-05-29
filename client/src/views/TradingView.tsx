@@ -340,7 +340,12 @@ export default function TradingView() {
       setState((prev) => prev ? { ...prev, priming: payload.priming ?? null } : prev);
     }
 
+    function onPrimingBulletin(payload: PrimingBulletin) {
+      setState((prev) => prev ? { ...prev, priming: payload } : prev);
+    }
+
     socket.on("market_started", onMarketStarted);
+    socket.on("priming_bulletin", onPrimingBulletin);
     socket.on("round_started", onRoundStarted);
     socket.on("price_update", onPriceUpdate);
     socket.on("round_ended", onRoundEnded);
@@ -351,6 +356,7 @@ export default function TradingView() {
 
     return () => {
       socket.off("market_started", onMarketStarted);
+      socket.off("priming_bulletin", onPrimingBulletin);
       socket.off("round_started", onRoundStarted);
       socket.off("price_update", onPriceUpdate);
       socket.off("round_ended", onRoundEnded);

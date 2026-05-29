@@ -10,6 +10,7 @@ type SessionRow = {
   session_id: number;
   label: string;
   rotation_id: number;
+  treated_count: number;
   lmsr_b_parameter: number;
   closed_at: string | null;
 };
@@ -86,6 +87,7 @@ export default function AdminPanel() {
   const [marketNumber, setMarketNumber] = useState(1);
   const [roundNumber, setRoundNumber] = useState(1);
   const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(9);
+  const [newSessionTreatedCount, setNewSessionTreatedCount] = useState(3);
   const [newSessionLiquidity, setNewSessionLiquidity] = useState(36);
   const [newSessionShowTournamentPayoutScreen, setNewSessionShowTournamentPayoutScreen] = useState(true);
   const [tab, setTab] = useState<AdminTab>("control");
@@ -147,9 +149,14 @@ export default function AdminPanel() {
   async function createSession() {
     const label = `S${new Date().toISOString().slice(0, 10)}-A`;
     const subjectCount = Math.max(1, Math.min(20, Math.trunc(newSessionSubjectCount || 9)));
+    const treatedCount = Math.max(2, Math.min(subjectCount, Math.trunc(newSessionTreatedCount || 3)));
     const liquidity = Number(newSessionLiquidity);
     if (!Number.isFinite(liquidity) || liquidity <= 0) {
       setMessage("Market liquidity must be greater than 0.");
+      return;
+    }
+    if (treatedCount > subjectCount) {
+      setMessage("Treated count must be less than or equal to participants.");
       return;
     }
     const created = (await apiPost(
@@ -158,6 +165,7 @@ export default function AdminPanel() {
         label,
         rotation_id: 1,
         subject_count: subjectCount,
+        treated_count: treatedCount,
         lmsr_b_parameter: liquidity,
         show_tournament_payout_screen: newSessionShowTournamentPayoutScreen,
       },
@@ -345,7 +353,7 @@ export default function AdminPanel() {
                   >
                     <p className="text-[11px] font-mono text-foreground">#{s.session_id} · {s.label}</p>
                     <p className="text-[10px] font-mono text-muted-foreground mt-0.5">
-                      {s.closed_at ? `Closed ${s.closed_at.slice(0, 10)}` : "Active"} · rotation {s.rotation_id} · b={s.lmsr_b_parameter}
+                      {s.closed_at ? `Closed ${s.closed_at.slice(0, 10)}` : "Active"} · rotation {s.rotation_id} · treated {s.treated_count} · b={s.lmsr_b_parameter}
                     </p>
                   </button>
                 ))}
@@ -363,6 +371,17 @@ export default function AdminPanel() {
                   className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none"
                 />
                 <label className="block text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground pt-1">
+                  Treated count
+                </label>
+                <input
+                  type="number"
+                  min={2}
+                  max={newSessionSubjectCount}
+                  value={newSessionTreatedCount}
+                  onChange={(e) => setNewSessionTreatedCount(Number(e.target.value))}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none"
+                />
+                <label className="block text-[9px] font-mono uppercase tracking-[0.15em] text-muted-foreground pt-1">
                   Market liquidity
                 </label>
                 <input
@@ -377,7 +396,7 @@ export default function AdminPanel() {
                   Higher values reduce price movement per trade.
                 </p>
                 <p className="text-[10px] font-mono text-muted-foreground">
-                  Informed per treated market: 3
+                  Treated participants are randomized per treated market.
                 </p>
                 <label className="flex items-start gap-3 cursor-pointer pt-2">
                   <input
@@ -463,6 +482,12 @@ export default function AdminPanel() {
                           className="py-2.5 border border-border text-[10px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"
                         >
                           Resolve Market {marketNumber}
+                        </button>
+                        <button
+                          onClick={() => action(`/admin/sessions/${selectedSession}/markets/${marketNumber}/priming`, {}).catch((err) => setMessage(err instanceof Error ? err.message : "Action failed"))}
+                          className="py-2.5 border border-amber-500/40 bg-amber-500/10 text-[10px] font-mono uppercase tracking-[0.1em] text-amber-300 hover:bg-amber-500/15 transition-colors"
+                        >
+                          Send Briefing {marketNumber}
                         </button>
                       </div>
                     </div>

@@ -115,6 +115,7 @@ export interface ServerToClientEvents {
   round_ended: (payload: RoundEndedEvent) => void;
   market_outcome_public: (payload: MarketOutcomePublicEvent) => void;
   market_resolved: (payload: MarketResolvedEvent) => void;
+  priming_bulletin: (payload: PrimingBulletin) => void;
   session_closed: (payload: { session_id: number }) => void;
   error: (payload: ErrorEvent) => void;
 }

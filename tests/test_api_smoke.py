@@ -26,6 +26,7 @@ def test_create_session_defaults_subject_count_to_9() -> None:
         session_row = db.get(SessionModel, session_id)
         assert session_row is not None
         assert session_row.show_tournament_payout_screen is True
+        assert session_row.treated_count == 3
         rows = db.scalars(
             select(ParticipantSession).where(ParticipantSession.session_id == session_id)
         ).all()
@@ -154,6 +155,58 @@ def test_create_session_rejects_non_positive_liquidity() -> None:
         assert create.status_code == 422
 
 
+def test_create_session_treated_count_override_is_stored_and_used() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "treated-override", "rotation_id": 1, "subject_count": 9, "treated_count": 4},
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    with SessionLocal() as db:
+        session_row = db.get(SessionModel, session_id)
+        assert session_row is not None
+        assert session_row.treated_count == 4
+
+    start_market = client.post(
+        f"/admin/sessions/{session_id}/markets",
+        auth=auth,
+        json={"market_number": 2},
+    )
+    assert start_market.status_code == 200
+
+    participants = client.get(f"/admin/sessions/{session_id}/participants", auth=auth).json()
+    informed_count = sum(
+        1
+        for row in participants
+        if row["markets"].get("2", {}).get("information_treated") is True
+    )
+    assert informed_count == 4
+
+
+def test_create_session_rejects_invalid_treated_count_bounds() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    too_low = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "treated-low", "rotation_id": 1, "subject_count": 9, "treated_count": 1},
+    )
+    assert too_low.status_code == 422
+
+    too_high = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={"label": "treated-high", "rotation_id": 1, "subject_count": 9, "treated_count": 10},
+    )
+    assert too_high.status_code == 422
+
+
 def test_session_happy_path_smoke() -> None:
     client = TestClient(fastapi_app)
     auth = ("admin", "admin")
@@ -243,6 +296,7 @@ def test_session_happy_path_smoke() -> None:
     export_json = client.get(f"/admin/sessions/{session_id}/export.json", auth=auth)
     assert export_json.status_code == 200
     assert export_json.json()["session"]["id"] == session_id
+    assert export_json.json()["session"]["treated_count"] == 3
 
     close = client.post(f"/admin/sessions/{session_id}/close", auth=auth)
     assert close.status_code == 200

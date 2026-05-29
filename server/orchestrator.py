@@ -78,16 +78,22 @@ class Orchestrator:
         label: str,
         rotation_id: int,
         subject_count: int,
+        treated_count: int = 3,
         lmsr_b_parameter: float = 36.0,
         show_tournament_payout_screen: bool = True,
     ) -> int:
         if lmsr_b_parameter <= 0:
             raise ValueError("lmsr_b_parameter must be > 0")
+        if treated_count < 2:
+            raise ValueError("treated_count must be >= 2")
+        if treated_count > subject_count:
+            raise ValueError("treated_count must be <= subject_count")
         with self.db_session_factory() as db:
             session = SessionModel(
                 session_label=label,
                 rotation_id=rotation_id,
                 scenario_order="C,A,B,D",
+                treated_count=treated_count,
                 lmsr_b_parameter=Decimal(str(lmsr_b_parameter)),
                 show_tournament_payout_screen=show_tournament_payout_screen,
             )
@@ -170,7 +176,14 @@ class Orchestrator:
                 if is_practice:
                     assign = MarketAssignment(role_tier="uninformed", endowment_tokens=100.0)
                 else:
-                    assign = get_assignment(session_row.rotation_id, pid, market_number, len(participants))
+                    assign = get_assignment(
+                        session_id=session_id,
+                        session_rotation_id=session_row.rotation_id,
+                        participant_id=pid,
+                        market_number=market_number,
+                        subject_count=len(participants),
+                        treated_count=session_row.treated_count,
+                    )
                 db.add(
                     MarketRole(
                         market_id=market.id,
