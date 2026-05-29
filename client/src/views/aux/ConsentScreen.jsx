@@ -7,18 +7,18 @@ import { AlertTriangle, CheckCircle } from "lucide-react";
 export default function ConsentScreen() {
   const navigate = useNavigate();
   const [consented, setConsented] = useState(false);
-  const [name, setName] = useState("");
+  const [fakeName, setFakeName] = useState("");
   const [error, setError] = useState("");
 
   /** @param {React.FormEvent<HTMLFormElement>} e */
   async function onContinue(e) {
     e.preventDefault();
-    if (!consented || !name.trim()) {
-      setError("Consent and name are required.");
+    if (!consented || !fakeName.trim()) {
+      setError("Consent and fake name are required.");
       return;
     }
     setError("");
-    await apiPost("/flow_step", { flow_step: "instructions", metadata: { consented: true, name } });
+    await apiPost("/flow_step", { flow_step: "instructions", metadata: { consented: true, name: fakeName } });
     navigate("/instructions");
   }
 
@@ -37,12 +37,12 @@ export default function ConsentScreen() {
 
         <div>
           <label className="block text-[10px] font-mono uppercase tracking-[0.15em] text-muted-foreground mb-2">
-            Full name
+            Fake name
           </label>
           <input
-            value={name}
-            onChange={(e) => { setName(e.target.value); setError(""); }}
-            placeholder="As it appears on your ID"
+            value={fakeName}
+            onChange={(e) => { setFakeName(e.target.value); setError(""); }}
+            placeholder="Choose any alias you want"
             className="w-full bg-transparent border-b border-border px-0 py-2 text-sm font-mono focus:outline-none focus:border-foreground/60 placeholder:text-muted-foreground/50 transition-colors"
           />
         </div>

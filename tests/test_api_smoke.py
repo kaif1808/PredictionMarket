@@ -23,6 +23,9 @@ def test_create_session_defaults_subject_count_to_9() -> None:
     session_id = create.json()["session_id"]
 
     with SessionLocal() as db:
+        session_row = db.get(SessionModel, session_id)
+        assert session_row is not None
+        assert session_row.show_tournament_payout_screen is True
         rows = db.scalars(
             select(ParticipantSession).where(ParticipantSession.session_id == session_id)
         ).all()
@@ -97,6 +100,45 @@ def test_create_session_liquidity_override_is_stored_and_used_for_market() -> No
         )
         assert market is not None
         assert market.b_parameter == Decimal("12.5")
+
+
+def test_create_session_can_disable_tournament_payout_screen_and_exposes_state_flag() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post(
+        "/admin/sessions",
+        auth=auth,
+        json={
+            "label": "no-payout-screen",
+            "rotation_id": 1,
+            "subject_count": 8,
+            "show_tournament_payout_screen": False,
+        },
+    )
+    assert create.status_code == 200
+    session_id = create.json()["session_id"]
+
+    with SessionLocal() as db:
+        session_row = db.get(SessionModel, session_id)
+        assert session_row is not None
+        assert session_row.show_tournament_payout_screen is False
+        ps = db.scalar(
+            select(ParticipantSession).where(
+                ParticipantSession.session_id == session_id,
+                ParticipantSession.participant_id == "P01",
+            )
+        )
+        assert ps is not None
+        token = ps.join_token
+        assert token is not None
+
+    join = client.post("/auth/join", json={"join_token": token})
+    assert join.status_code == 200
+
+    state = client.get("/state")
+    assert state.status_code == 200
+    assert state.json()["show_tournament_payout_screen"] is False
 
 
 def test_create_session_rejects_non_positive_liquidity() -> None:
@@ -205,7 +247,17 @@ def test_session_happy_path_smoke() -> None:
     close = client.post(f"/admin/sessions/{session_id}/close", auth=auth)
     assert close.status_code == 200
 
-    debrief = client.post("/debrief/submit", json={"answers": {"strategy": "trend following"}})
+    debrief = client.post(
+        "/debrief/submit",
+        json={
+            "answers": {
+                "strategy": "trend following",
+                "experimental_economics": "no",
+                "prediction_market_literature": "yes",
+                "prediction_market_use": "no",
+            }
+        },
+    )
     assert debrief.status_code == 200
 
 

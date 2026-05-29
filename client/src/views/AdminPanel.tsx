@@ -85,6 +85,7 @@ export default function AdminPanel() {
   const [roundNumber, setRoundNumber] = useState(1);
   const [newSessionSubjectCount, setNewSessionSubjectCount] = useState(9);
   const [newSessionLiquidity, setNewSessionLiquidity] = useState(36);
+  const [newSessionShowTournamentPayoutScreen, setNewSessionShowTournamentPayoutScreen] = useState(true);
   const [tab, setTab] = useState<AdminTab>("control");
 
   async function loadSessions() {
@@ -151,7 +152,13 @@ export default function AdminPanel() {
     }
     const created = (await apiPost(
       "/admin/sessions",
-      { label, rotation_id: 1, subject_count: subjectCount, lmsr_b_parameter: liquidity },
+      {
+        label,
+        rotation_id: 1,
+        subject_count: subjectCount,
+        lmsr_b_parameter: liquidity,
+        show_tournament_payout_screen: newSessionShowTournamentPayoutScreen,
+      },
       auth
     )) as { session_id: number };
     setSelectedSession(created.session_id);
@@ -370,6 +377,17 @@ export default function AdminPanel() {
                 <p className="text-[10px] font-mono text-muted-foreground">
                   Informed per treated market: 3
                 </p>
+                <label className="flex items-start gap-3 cursor-pointer pt-2">
+                  <input
+                    type="checkbox"
+                    checked={newSessionShowTournamentPayoutScreen}
+                    onChange={(e) => setNewSessionShowTournamentPayoutScreen(e.target.checked)}
+                    className="mt-1 h-3.5 w-3.5 border border-border bg-transparent accent-foreground"
+                  />
+                  <span className="text-[11px] font-mono text-foreground/70 leading-snug">
+                    Show tournament payout explanation during instructions
+                  </span>
+                </label>
                 <button
                   onClick={() => createSession().catch((err) => setMessage(err instanceof Error ? err.message : "Create failed"))}
                   className="w-full py-2.5 border border-border text-[11px] font-mono uppercase tracking-[0.1em] text-foreground hover:bg-foreground/5 transition-colors"
