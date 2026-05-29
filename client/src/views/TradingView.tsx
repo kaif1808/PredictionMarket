@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getSocket } from "../lib/socket";
 import { interpolateDisplayPrice } from "../lib/priceLerp.js";
+import { estimateTradeAmount } from "../lib/tradeEstimate.js";
 import type {
   ErrorEvent,
   MarketResolvedEvent,
@@ -476,7 +477,7 @@ export default function TradingView() {
   const held = direction === "yes" ? yesHeld : noHeld;
   const maxQty = 20;
   const balance = Number(state.balance || 0);
-  const estCost = rawPrice * Number(quantity);
+  const estCost = estimateTradeAmount(rawPrice, direction, Number(quantity));
   const hasMinimumQuantity = quantity >= 1;
   const hasSellInventory = held >= quantity;
   const hasBuyBalance = estCost <= balance;
