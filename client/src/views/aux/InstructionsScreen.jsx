@@ -38,10 +38,15 @@ export default function InstructionsScreen() {
         </div>
 
         <div className="border border-border p-4">
-          <p className="text-sm font-mono text-foreground mb-2">2. How prices work (LMSR)</p>
-          <p className="text-sm leading-relaxed text-foreground/75" style={{ fontFamily: "Spectral, Georgia, serif" }}>
-            Prices use an LMSR market maker with b = 30. Every trade moves the displayed probability. Buying YES pushes YES up; buying NO pushes YES down.
-          </p>
+          <p className="text-sm font-mono text-foreground mb-2">2. How prices work</p>
+          <div className="space-y-3 text-sm leading-relaxed text-foreground/75" style={{ fontFamily: "Spectral, Georgia, serif" }}>
+            <p>
+              The market algorithmically provides liquidity. When participants place orders, the market-implied probability changes, and that probability determines the price of the securities.
+            </p>
+            <p>
+              A YES security pays 1 if the outcome resolves YES and 0 otherwise. A NO security pays 1 if the outcome resolves NO and 0 otherwise. The current price reflects the market&apos;s implied probability of that outcome.
+            </p>
+          </div>
         </div>
 
         <div className="border border-border p-4">
