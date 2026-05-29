@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -16,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from server.config import load_settings
@@ -40,6 +42,8 @@ from server.scenarios import get_bulletin
 
 settings = load_settings()
 ROUND_DURATION_SECONDS = 90
+PRACTICE_ROUND_DURATION_SECONDS = 45
+PRACTICE_MARKET_NUMBER = Orchestrator.PRACTICE_MARKET_NUMBER
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger("valdoria")
 
@@ -56,7 +60,11 @@ orchestrator = Orchestrator(
     lmsr_b_parameter=settings.lmsr_b_parameter,
 )
 init_db()
-orchestrator.restore_from_db()
+try:
+    orchestrator.restore_from_db()
+except OperationalError:
+    logger.warning("Skipping state restore due to schema mismatch; run migrations to sync local DB.")
+practice_auto_close_tasks: dict[int, asyncio.Task[None]] = {}
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -153,6 +161,72 @@ SCENARIO_DESCRIPTIONS = {
     "C": "Baseline uncertainty scenario for Valdoria conflict outlook.",
     "D": "Combined information and endowment treatment scenario.",
 }
+
+
+def _is_practice_market(market: Market | None) -> bool:
+    return bool(market is not None and market.is_practice)
+
+
+def _round_duration_seconds_for_market(market: Market | None) -> int:
+    if _is_practice_market(market):
+        return PRACTICE_ROUND_DURATION_SECONDS
+    return ROUND_DURATION_SECONDS
+
+
+def _cancel_practice_auto_close_task(session_id: int) -> None:
+    task = practice_auto_close_tasks.pop(session_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+def _expire_practice_round_if_needed(session_id: int) -> None:
+    try:
+        state = orchestrator._require_state(session_id)
+    except ValueError:
+        return
+    if state.phase != SessionPhase.ROUND_OPEN or state.current_market_number != PRACTICE_MARKET_NUMBER:
+        return
+
+    with SessionLocal() as db:
+        market = db.scalars(
+            select(Market).where(
+                Market.session_id == session_id,
+                Market.market_number == PRACTICE_MARKET_NUMBER,
+            )
+        ).first()
+        if market is None or not _is_practice_market(market):
+            return
+        if state.current_round_number is None:
+            return
+        round_row = db.scalars(
+            select(Round).where(
+                Round.market_id == market.id,
+                Round.round_number == state.current_round_number,
+            )
+        ).first()
+        if round_row is None or round_row.opened_at is None:
+            return
+        opened_at = round_row.opened_at
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        deadline = opened_at + timedelta(seconds=_round_duration_seconds_for_market(market))
+        if datetime.now(timezone.utc) < deadline:
+            return
+
+    _cancel_practice_auto_close_task(session_id=session_id)
+    try:
+        orchestrator.end_round(session_id=session_id)
+    except ValueError:
+        return
+    try:
+        orchestrator.close_practice_market(session_id=session_id)
+    except ValueError:
+        return
+    with SessionLocal() as db:
+        participants = db.scalars(select(ParticipantSession).where(ParticipantSession.session_id == session_id)).all()
+        for participant in participants:
+            participant.flow_step = "lobby"
+        db.commit()
 
 
 def _admin_auth(credentials: HTTPBasicCredentials = Depends(security)) -> str:
@@ -304,16 +378,21 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
             role_tier=role.role_tier,
             stage=market.stage,
         )
+    round_duration_seconds = None
+    is_practice_round = _is_practice_market(market) and round_row is not None
     round_deadline_unix_ms = None
     if (
         phase == SessionPhase.ROUND_OPEN.value
         and round_row is not None
         and round_row.opened_at is not None
     ):
+        round_duration_seconds = _round_duration_seconds_for_market(market)
         opened_at = round_row.opened_at
         if opened_at.tzinfo is None:
             opened_at = opened_at.replace(tzinfo=timezone.utc)
-        round_deadline_unix_ms = int((opened_at + timedelta(seconds=ROUND_DURATION_SECONDS)).timestamp() * 1000)
+        round_deadline_unix_ms = int((opened_at + timedelta(seconds=round_duration_seconds)).timestamp() * 1000)
+    elif round_row is not None:
+        round_duration_seconds = _round_duration_seconds_for_market(market)
 
     return {
         "session_id": session_id,
@@ -337,6 +416,8 @@ def _build_participant_state(db: Session, session_id: int, participant_id: str) 
         "bulletin": bulletin,
         "signal_value": signal_value,
         "signal_theta": signal_theta,
+        "is_practice_round": is_practice_round,
+        "round_duration_seconds": round_duration_seconds,
         "round_deadline_unix_ms": round_deadline_unix_ms,
     }
 
@@ -398,47 +479,18 @@ def list_sessions(_: str = Depends(_admin_auth), db: Session = Depends(get_db)) 
     ]
 
 
-@fastapi_app.post("/admin/sessions/{session_id}/markets")
-async def start_market(session_id: int, payload: StartMarketRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
-    market = orchestrator.start_market(session_id=session_id, market_number=payload.market_number)
-    roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
-    for role in roles:
-        _set_flow_step(db, session_id, role.participant_id, f"market-{market.market_number}")
-        event = MarketStartedEvent(
-            market_number=market.market_number,
-            stage=market.stage,
-            scenario_description=SCENARIO_DESCRIPTIONS.get(market.scenario_id, "Valdoria market scenario"),
-            role_tier=role.role_tier,
-            endowment_tokens=float(role.endowment_tokens),
-            starting_balance=float(role.starting_balance),
-            current_price=0.5,
-            max_rounds=5,
-        )
-        await sio.emit(
-            "market_started",
-            event.model_dump(),
-            room=_room_participant(session_id, role.participant_id),
-        )
-    db.commit()
-    return {"market_id": market.id, "market_number": market.market_number, "stage": market.stage}
-
-
-@fastapi_app.post("/admin/sessions/{session_id}/rounds")
-async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
-    try:
-        round_row = orchestrator.start_round(session_id=session_id, round_number=payload.round_number)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    market = db.get(Market, round_row.market_id)
-    if market is None:
-        raise HTTPException(status_code=500, detail="market missing")
-
+async def _emit_round_started_events(session_id: int, market: Market, round_row: Round, db: Session) -> None:
     role_rows = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
     signals_by_pid = {
         s.participant_id: s
         for s in db.scalars(select(Signal).where(Signal.round_id == round_row.id)).all()
     }
-    deadline_ms = int((datetime.now(timezone.utc) + timedelta(seconds=ROUND_DURATION_SECONDS)).timestamp() * 1000)
+    duration_seconds = _round_duration_seconds_for_market(market)
+    opened_at = round_row.opened_at or datetime.now(timezone.utc)
+    if opened_at.tzinfo is None:
+        opened_at = opened_at.replace(tzinfo=timezone.utc)
+    deadline_ms = int((opened_at + timedelta(seconds=duration_seconds)).timestamp() * 1000)
+
     for role in role_rows:
         participant_id = role.participant_id
         signal = signals_by_pid.get(participant_id)
@@ -469,6 +521,8 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
 
         event = RoundStartedEvent(
             round_number=round_row.round_number,
+            is_practice_round=_is_practice_market(market),
+            round_duration_seconds=duration_seconds,
             trading_open=True,
             current_price=float(round_row.opening_price or 0.5),
             balance=float(role.starting_balance),
@@ -482,6 +536,156 @@ async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depe
             round_deadline_unix_ms=deadline_ms,
         )
         await sio.emit("round_started", event.model_dump(), room=_room_participant(session_id, participant_id))
+
+
+@fastapi_app.post("/admin/sessions/{session_id}/markets")
+async def start_market(session_id: int, payload: StartMarketRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
+    market = orchestrator.start_market(session_id=session_id, market_number=payload.market_number)
+    roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
+    for role in roles:
+        _set_flow_step(db, session_id, role.participant_id, f"market-{market.market_number}")
+        event = MarketStartedEvent(
+            market_number=market.market_number,
+            is_practice=False,
+            stage=market.stage,
+            scenario_description=SCENARIO_DESCRIPTIONS.get(market.scenario_id, "Valdoria market scenario"),
+            role_tier=role.role_tier,
+            endowment_tokens=float(role.endowment_tokens),
+            starting_balance=float(role.starting_balance),
+            current_price=0.5,
+            max_rounds=5,
+        )
+        await sio.emit(
+            "market_started",
+            event.model_dump(),
+            room=_room_participant(session_id, role.participant_id),
+        )
+    db.commit()
+    return {"market_id": market.id, "market_number": market.market_number, "stage": market.stage}
+
+
+async def _finalize_practice_after_round_close(session_id: int) -> None:
+    with SessionLocal() as db:
+        state = orchestrator._require_state(session_id)
+        market = None
+        if state.current_market_number is not None:
+            market = db.scalars(
+                select(Market).where(
+                    Market.session_id == session_id,
+                    Market.market_number == state.current_market_number,
+                )
+            ).first()
+        if market is None or not _is_practice_market(market):
+            return
+        orchestrator.close_practice_market(session_id=session_id)
+        participants = db.scalars(select(ParticipantSession).where(ParticipantSession.session_id == session_id)).all()
+        for participant in participants:
+            participant.flow_step = "lobby"
+        db.commit()
+
+
+async def _auto_close_practice_round(session_id: int, round_number: int, delay_seconds: int) -> None:
+    try:
+        await asyncio.sleep(delay_seconds)
+        state = orchestrator._require_state(session_id)
+        if state.phase != SessionPhase.ROUND_OPEN:
+            return
+        if state.current_round_number != round_number:
+            return
+
+        round_row = orchestrator.end_round(session_id=session_id)
+        with SessionLocal() as db:
+            market = db.get(Market, round_row.market_id)
+            if market is None or not _is_practice_market(market):
+                return
+            round_volume = int(
+                db.scalar(
+                    select(func.coalesce(func.sum(Trade.quantity), 0)).where(Trade.round_id == round_row.id)
+                )
+                or 0
+            )
+        event = RoundEndedEvent(
+            round_number=round_row.round_number,
+            closing_price=float(round_row.closing_price or 0.5),
+            round_volume=round_volume,
+        )
+        await sio.emit("round_ended", event.model_dump(), room=_room_all(session_id))
+        await _finalize_practice_after_round_close(session_id=session_id)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("practice auto-close failed for session=%s", session_id)
+    finally:
+        practice_auto_close_tasks.pop(session_id, None)
+
+
+@fastapi_app.post("/admin/sessions/{session_id}/practice_round")
+async def start_practice_round(session_id: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        state = orchestrator._require_state(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if state.phase != SessionPhase.SESSION_OPEN:
+        raise HTTPException(status_code=400, detail="Cannot start practice round outside session_open phase")
+
+    try:
+        market = orchestrator.start_market(session_id=session_id, market_number=PRACTICE_MARKET_NUMBER, is_practice=True)
+        round_row = orchestrator.start_round(session_id=session_id, round_number=1)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
+    for role in roles:
+        _set_flow_step(db, session_id, role.participant_id, "market-practice")
+        event = MarketStartedEvent(
+            market_number=market.market_number,
+            is_practice=True,
+            stage=market.stage,
+            scenario_description="Practice round: familiarize with live trading mechanics.",
+            role_tier=role.role_tier,
+            endowment_tokens=float(role.endowment_tokens),
+            starting_balance=float(role.starting_balance),
+            current_price=0.5,
+            max_rounds=1,
+        )
+        await sio.emit(
+            "market_started",
+            event.model_dump(),
+            room=_room_participant(session_id, role.participant_id),
+        )
+    db.commit()
+    await _emit_round_started_events(session_id=session_id, market=market, round_row=round_row, db=db)
+
+    _cancel_practice_auto_close_task(session_id=session_id)
+    practice_auto_close_tasks[session_id] = asyncio.create_task(
+        _auto_close_practice_round(
+            session_id=session_id,
+            round_number=round_row.round_number,
+            delay_seconds=PRACTICE_ROUND_DURATION_SECONDS,
+        )
+    )
+    return {
+        "market_id": market.id,
+        "market_number": market.market_number,
+        "round_id": round_row.id,
+        "round_number": round_row.round_number,
+        "is_practice": True,
+        "duration_seconds": PRACTICE_ROUND_DURATION_SECONDS,
+    }
+
+
+@fastapi_app.post("/admin/sessions/{session_id}/rounds")
+async def start_round(session_id: int, payload: StartRoundRequest, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        round_row = orchestrator.start_round(session_id=session_id, round_number=payload.round_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    market = db.get(Market, round_row.market_id)
+    if market is None:
+        raise HTTPException(status_code=500, detail="market missing")
+    if _is_practice_market(market):
+        raise HTTPException(status_code=400, detail="Use /practice_round to run the practice market")
+    await _emit_round_started_events(session_id=session_id, market=market, round_row=round_row, db=db)
     return {"round_id": round_row.id, "round_number": round_row.round_number}
 
 
@@ -491,6 +695,9 @@ async def end_round(session_id: int, round_number: int, _: str = Depends(_admin_
     if state.current_round_number != round_number:
         raise HTTPException(status_code=400, detail="round mismatch")
     round_row = orchestrator.end_round(session_id=session_id)
+    with SessionLocal() as db:
+        market = db.get(Market, round_row.market_id)
+        is_practice = _is_practice_market(market)
     with SessionLocal() as db:
         round_volume = int(
             db.scalar(
@@ -505,6 +712,9 @@ async def end_round(session_id: int, round_number: int, _: str = Depends(_admin_
         round_volume=round_volume,
     )
     await sio.emit("round_ended", event.model_dump(), room=_room_all(session_id))
+    if is_practice:
+        _cancel_practice_auto_close_task(session_id=session_id)
+        await _finalize_practice_after_round_close(session_id=session_id)
     return {
         "round_id": round_row.id,
         "closing_price": float(round_row.closing_price or 0.5),
@@ -518,6 +728,14 @@ async def resolve_market(session_id: int, market_number: int, _: str = Depends(_
     state = orchestrator._require_state(session_id)
     if state.current_market_number != market_number:
         raise HTTPException(status_code=400, detail="market mismatch")
+    market = db.scalars(
+        select(Market).where(
+            Market.session_id == session_id,
+            Market.market_number == market_number,
+        )
+    ).first()
+    if market is not None and _is_practice_market(market):
+        raise HTTPException(status_code=400, detail="Practice market cannot be resolved")
     resolution = orchestrator.resolve_market(session_id=session_id)
     await _emit_market_resolution(session_id=session_id, market_id=resolution.market_id, outcome=resolution.outcome, db=db)
     return {"outcome": resolution.outcome}
@@ -525,6 +743,7 @@ async def resolve_market(session_id: int, market_number: int, _: str = Depends(_
 
 @fastapi_app.post("/admin/sessions/{session_id}/close")
 async def close_session(session_id: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    _cancel_practice_auto_close_task(session_id=session_id)
     rankings = orchestrator.close_session(session_id=session_id)
     participants = db.scalars(select(ParticipantSession).where(ParticipantSession.session_id == session_id)).all()
     for p in participants:
@@ -570,7 +789,7 @@ def get_tournament_provisional(session_id: int, _: str = Depends(_admin_auth), d
             func.count(MarketRole.final_balance),
         )
         .join(Market, MarketRole.market_id == Market.id)
-        .where(Market.session_id == session_id)
+        .where(Market.session_id == session_id, Market.is_practice.is_(False))
         .group_by(MarketRole.participant_id)
     ).all()
     ranked = sorted(
@@ -622,7 +841,7 @@ def list_session_participants(session_id: int, _: str = Depends(_admin_auth), db
             MarketRole.endowment_tokens,
         )
         .join(Market, MarketRole.market_id == Market.id)
-        .where(Market.session_id == session_id)
+        .where(Market.session_id == session_id, Market.is_practice.is_(False))
     ).all()
 
     treatment_by_participant: dict[str, dict[int, dict[str, Any]]] = {}
@@ -650,7 +869,12 @@ def list_session_participants(session_id: int, _: str = Depends(_admin_auth), db
 
 
 @fastapi_app.get("/admin/sessions/{session_id}/dashboard")
-def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> dict[str, Any]:
+def session_dashboard(
+    session_id: int,
+    include_practice: bool = False,
+    _: str = Depends(_admin_auth),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     session_row = db.get(SessionModel, session_id)
     if session_row is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -666,17 +890,32 @@ def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Sessio
     elif session_row.closed_at is not None:
         phase = "session_closed"
 
-    markets = db.scalars(select(Market).where(Market.session_id == session_id).order_by(Market.market_number)).all()
-    rounds = db.scalars(
-        select(Round).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id).order_by(Round.id)
-    ).all()
-    volume_rows = db.execute(
+    practice_round_active = current_market_number == PRACTICE_MARKET_NUMBER and phase in {
+        SessionPhase.MARKET_OPEN.value,
+        SessionPhase.ROUND_OPEN.value,
+        SessionPhase.ROUND_CLOSED.value,
+    }
+    if practice_round_active and not include_practice:
+        current_market_number = None
+        current_round_number = None
+
+    markets_query = select(Market).where(Market.session_id == session_id)
+    if not include_practice:
+        markets_query = markets_query.where(Market.is_practice.is_(False))
+    markets = db.scalars(markets_query.order_by(Market.market_number)).all()
+
+    rounds_query = select(Round).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+    volume_query = (
         select(Round.id, func.coalesce(func.sum(Trade.quantity), 0))
         .join(Market, Round.market_id == Market.id)
         .outerjoin(Trade, Trade.round_id == Round.id)
         .where(Market.session_id == session_id)
-        .group_by(Round.id)
-    ).all()
+    )
+    if not include_practice:
+        rounds_query = rounds_query.where(Market.is_practice.is_(False))
+        volume_query = volume_query.where(Market.is_practice.is_(False))
+    rounds = db.scalars(rounds_query.order_by(Round.id)).all()
+    volume_rows = db.execute(volume_query.group_by(Round.id)).all()
     volume_by_round = {rid: int(vol) for rid, vol in volume_rows}
 
     rounds_by_market: dict[int, list[Round]] = {}
@@ -692,6 +931,7 @@ def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Sessio
             {
                 "market_id": m.id,
                 "market_number": m.market_number,
+                "is_practice": bool(m.is_practice),
                 "stage": m.stage,
                 "scenario_id": m.scenario_id,
                 "current_price": lmsr.price(float(m.q_yes), float(m.q_no), float(m.b_parameter)),
@@ -720,6 +960,7 @@ def session_dashboard(session_id: int, _: str = Depends(_admin_auth), db: Sessio
         "phase": phase,
         "current_market_number": current_market_number,
         "current_round_number": current_round_number,
+        "practice_round_active": practice_round_active,
         "participant_count": len(participants),
         "markets": market_cards,
     }
@@ -755,6 +996,8 @@ async def emergency_round_close(
     if state.phase != SessionPhase.ROUND_OPEN:
         raise HTTPException(status_code=400, detail="No open round to force-close")
     round_row = orchestrator.end_round(session_id=session_id)
+    market = db.get(Market, round_row.market_id)
+    is_practice = _is_practice_market(market)
     round_volume = int(
         db.scalar(
             select(func.coalesce(func.sum(Trade.quantity), 0)).where(Trade.round_id == round_row.id)
@@ -767,6 +1010,9 @@ async def emergency_round_close(
         round_volume=round_volume,
     )
     await sio.emit("round_ended", event.model_dump(), room=_room_all(session_id))
+    if is_practice:
+        _cancel_practice_auto_close_task(session_id=session_id)
+        await _finalize_practice_after_round_close(session_id=session_id)
     _log_admin_action(db, session_id, "emergency_round_close", payload.reason)
     return {
         "ok": True,
@@ -786,6 +1032,14 @@ async def emergency_market_resolve(
     state = orchestrator._require_state(session_id)
     if state.current_market_number is None:
         raise HTTPException(status_code=400, detail="No active market to force-resolve")
+    market = db.scalars(
+        select(Market).where(
+            Market.session_id == session_id,
+            Market.market_number == state.current_market_number,
+        )
+    ).first()
+    if market is not None and _is_practice_market(market):
+        raise HTTPException(status_code=400, detail="Practice market cannot be resolved")
     resolution = orchestrator.resolve_market(session_id=session_id)
     await _emit_market_resolution(session_id=session_id, market_id=resolution.market_id, outcome=resolution.outcome, db=db)
     _log_admin_action(db, session_id, "emergency_market_resolve", payload.reason)
@@ -799,6 +1053,7 @@ async def emergency_session_close(
     _: str = Depends(_admin_auth),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    _cancel_practice_auto_close_task(session_id=session_id)
     rankings = orchestrator.close_session(session_id=session_id)
     participants = db.scalars(select(ParticipantSession).where(ParticipantSession.session_id == session_id)).all()
     for p in participants:
@@ -810,9 +1065,17 @@ async def emergency_session_close(
 
 
 @fastapi_app.get("/admin/sessions/{session_id}/export.csv")
-def export_session_csv(session_id: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> PlainTextResponse:
+def export_session_csv(
+    session_id: int,
+    include_practice: bool = False,
+    _: str = Depends(_admin_auth),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
+    trade_query = select(Trade).join(Round, Trade.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+    if not include_practice:
+        trade_query = trade_query.where(Market.is_practice.is_(False))
     trades = db.scalars(
-        select(Trade).join(Round, Trade.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+        trade_query
     ).all()
     buffer = io.StringIO()
     writer = csv.writer(buffer)
@@ -855,21 +1118,30 @@ def export_session_csv(session_id: int, _: str = Depends(_admin_auth), db: Sessi
 
 
 @fastapi_app.get("/admin/sessions/{session_id}/export.json")
-def export_session_json(session_id: int, _: str = Depends(_admin_auth), db: Session = Depends(get_db)) -> JSONResponse:
+def export_session_json(
+    session_id: int,
+    include_practice: bool = False,
+    _: str = Depends(_admin_auth),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
     session_row = db.get(SessionModel, session_id)
     if session_row is None:
         raise HTTPException(status_code=404, detail="session not found")
 
-    markets = db.scalars(select(Market).where(Market.session_id == session_id).order_by(Market.market_number)).all()
-    rounds = db.scalars(
-        select(Round).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id).order_by(Round.id)
-    ).all()
-    trades = db.scalars(
-        select(Trade).join(Round, Trade.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id).order_by(Trade.id)
-    ).all()
-    signals = db.scalars(
-        select(Signal).join(Round, Signal.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id).order_by(Signal.id)
-    ).all()
+    markets_query = select(Market).where(Market.session_id == session_id)
+    rounds_query = select(Round).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+    trades_query = select(Trade).join(Round, Trade.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+    signals_query = select(Signal).join(Round, Signal.round_id == Round.id).join(Market, Round.market_id == Market.id).where(Market.session_id == session_id)
+    if not include_practice:
+        markets_query = markets_query.where(Market.is_practice.is_(False))
+        rounds_query = rounds_query.where(Market.is_practice.is_(False))
+        trades_query = trades_query.where(Market.is_practice.is_(False))
+        signals_query = signals_query.where(Market.is_practice.is_(False))
+
+    markets = db.scalars(markets_query.order_by(Market.market_number)).all()
+    rounds = db.scalars(rounds_query.order_by(Round.id)).all()
+    trades = db.scalars(trades_query.order_by(Trade.id)).all()
+    signals = db.scalars(signals_query.order_by(Signal.id)).all()
     rankings = db.scalars(
         select(TournamentRanking).where(TournamentRanking.session_id == session_id).order_by(TournamentRanking.rank)
     ).all()
@@ -888,6 +1160,7 @@ def export_session_json(session_id: int, _: str = Depends(_admin_auth), db: Sess
             {
                 "id": m.id,
                 "market_number": m.market_number,
+                "is_practice": bool(m.is_practice),
                 "scenario_id": m.scenario_id,
                 "true_probability": float(m.true_probability),
                 "stage": m.stage,
@@ -959,6 +1232,7 @@ def export_session_json(session_id: int, _: str = Depends(_admin_auth), db: Sess
 @fastapi_app.post("/trade")
 async def trade(payload: TradeRequest, valdoria_auth: str | None = Cookie(default=None), db: Session = Depends(get_db)) -> dict[str, Any]:
     session_id, participant_id = _parse_auth_cookie(valdoria_auth)
+    _expire_practice_round_if_needed(session_id=session_id)
     try:
         result = orchestrator.record_trade(session_id=session_id, participant_id=participant_id, trade=payload)
     except ValueError as exc:
@@ -1000,6 +1274,7 @@ async def trade(payload: TradeRequest, valdoria_auth: str | None = Cookie(defaul
 @fastapi_app.get("/state")
 def get_state(valdoria_auth: str | None = Cookie(default=None), db: Session = Depends(get_db)) -> dict[str, Any]:
     session_id, participant_id = _parse_auth_cookie(valdoria_auth)
+    _expire_practice_round_if_needed(session_id=session_id)
     return _build_participant_state(db=db, session_id=session_id, participant_id=participant_id)
 
 
@@ -1149,6 +1424,7 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any) -> bool:
     await sio.save_session(sid, {"session_id": session_id, "participant_id": participant_id})
     await sio.enter_room(sid, _room_all(session_id))
     await sio.enter_room(sid, _room_participant(session_id, participant_id))
+    _expire_practice_round_if_needed(session_id=session_id)
     with SessionLocal() as db:
         state_payload = _build_participant_state(db=db, session_id=session_id, participant_id=participant_id)
     await sio.emit("state_sync", state_payload, room=sid)

@@ -48,13 +48,17 @@ class ParticipantSession(Base):
 class Market(Base):
     __tablename__ = "markets"
     __table_args__ = (
-        CheckConstraint("market_number BETWEEN 1 AND 4", name="ck_market_number"),
+        CheckConstraint(
+            "(is_practice = 1 AND market_number = 0) OR (is_practice = 0 AND market_number BETWEEN 1 AND 4)",
+            name="ck_market_number",
+        ),
         UniqueConstraint("session_id", "market_number", name="uq_session_market_number"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     market_number: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    is_practice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     scenario_id: Mapped[str] = mapped_column(String(1), nullable=False)
     true_probability: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
     stage: Mapped[int] = mapped_column(SmallInteger, nullable=False)
