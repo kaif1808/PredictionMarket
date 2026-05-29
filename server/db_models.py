@@ -49,7 +49,7 @@ class Market(Base):
     __tablename__ = "markets"
     __table_args__ = (
         CheckConstraint(
-            "(is_practice = 1 AND market_number = 0) OR (is_practice = 0 AND market_number BETWEEN 1 AND 4)",
+            "(is_practice AND market_number = 0) OR ((NOT is_practice) AND market_number BETWEEN 1 AND 4)",
             name="ck_market_number",
         ),
         UniqueConstraint("session_id", "market_number", name="uq_session_market_number"),

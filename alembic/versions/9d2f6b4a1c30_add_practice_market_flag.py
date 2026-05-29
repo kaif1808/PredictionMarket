@@ -26,7 +26,7 @@ def upgrade() -> None:
         batch_op.drop_constraint("ck_market_number", type_="check")
         batch_op.create_check_constraint(
             "ck_market_number",
-            "(is_practice = 1 AND market_number = 0) OR (is_practice = 0 AND market_number BETWEEN 1 AND 4)",
+            "(is_practice AND market_number = 0) OR ((NOT is_practice) AND market_number BETWEEN 1 AND 4)",
         )
 
 
