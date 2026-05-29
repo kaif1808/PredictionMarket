@@ -63,7 +63,7 @@ function IntelPanel({
 }
 
 // ── MarketBriefing ─────────────────────────────────────────────────────────────
-function MarketBriefing({ priming, collapsed }: { priming: PrimingBulletin; collapsed?: boolean }) {
+function MarketBriefing({ priming, collapsed, secondsLeft }: { priming: PrimingBulletin; collapsed?: boolean; secondsLeft?: number | null }) {
   const tierAccent = {
     public:       { bar: "bg-muted-foreground/25", label: "text-muted-foreground/50", icon: <Eye className="w-3 h-3" /> },
     analytical:   { bar: "bg-cyan-500/50",          label: "text-cyan-400/60",          icon: <Shield className="w-3 h-3" /> },
@@ -82,10 +82,11 @@ function MarketBriefing({ priming, collapsed }: { priming: PrimingBulletin; coll
 
   return (
     <div className="mb-6 border border-border">
-      <div className="px-4 py-2.5 border-b border-border bg-foreground/[0.02]">
+      <div className="px-4 py-2.5 border-b border-border bg-foreground/[0.02] flex items-center justify-between">
         <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-muted-foreground/50">
           Market Intelligence Briefing
         </span>
+        {secondsLeft != null && <CountdownBadge seconds={secondsLeft} />}
       </div>
       <div className="divide-y divide-border">
         {priming.sources.map((source, i) => {
@@ -127,6 +128,8 @@ export default function TradingView() {
   const [submitting, setSubmitting] = useState(false);
   const [mode, setMode] = useState<"buy" | "sell">("buy");
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [briefingDeadlineMs, setBriefingDeadlineMs] = useState<number | null>(null);
+  const [briefingSecondsLeft, setBriefingSecondsLeft] = useState<number | null>(null);
   const [rawPrice, setRawPrice] = useState(0.5);
   const [displayPrice, setDisplayPrice] = useState(0.5);
   const displayPriceRef = useRef(0.5);
@@ -342,6 +345,7 @@ export default function TradingView() {
 
     function onPrimingBulletin(payload: PrimingBulletin) {
       setState((prev) => prev ? { ...prev, priming: payload } : prev);
+      setBriefingDeadlineMs(Date.now() + 60_000);
     }
 
     socket.on("market_started", onMarketStarted);
@@ -385,6 +389,24 @@ export default function TradingView() {
     const t = setInterval(tick, 500);
     return () => clearInterval(t);
   }, [deadlineMs]);
+
+  // Briefing countdown timer
+  useEffect(() => {
+    if (!briefingDeadlineMs) {
+      setBriefingSecondsLeft(null);
+      return;
+    }
+    function tick() {
+      const raw = Math.floor((briefingDeadlineMs! - Date.now()) / 1000);
+      setBriefingSecondsLeft(raw > 0 ? raw : 0);
+      if (Date.now() > briefingDeadlineMs!) {
+        setBriefingDeadlineMs(null);
+      }
+    }
+    tick();
+    const t = setInterval(tick, 500);
+    return () => clearInterval(t);
+  }, [briefingDeadlineMs]);
 
   useEffect(() => {
     if (deadlineMs === null || roundStartMs === null) return;
@@ -519,7 +541,7 @@ export default function TradingView() {
           {/* Left column */}
           <div>
             {state.priming && !tradingOpen && state.phase === "market_open" && (
-              <MarketBriefing priming={state.priming} />
+              <MarketBriefing priming={state.priming} secondsLeft={briefingSecondsLeft} />
             )}
             {/* Market price */}
             <div className="mb-5">
