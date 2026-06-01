@@ -28,7 +28,7 @@ def evaluate_b(b: float, runs: int, true_probability: float) -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sweep LMSR B values and report fit quality.")
-    parser.add_argument("--b-values", default="10,15,18,20,25,30")
+    parser.add_argument("--b-values", default="10,15,18,20,25,30,40,50,60,70,80,90,100", help="Comma-separated B values to evaluate.")
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--true-probability", type=float, default=0.65)
     args = parser.parse_args()
