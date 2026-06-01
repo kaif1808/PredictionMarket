@@ -163,7 +163,7 @@ export default function AbmWatch() {
 
   const currentPrice = revealedTrades.length > 0
     ? revealedTrades[revealedTrades.length - 1].price_after
-    : 0.5;
+    : (payload?.rounds[currentRound - 1]?.opening_price ?? 0.5);
 
   const chartData: Array<{ elapsedSec: number; price: number }> = payload
     ? [
@@ -290,7 +290,7 @@ export default function AbmWatch() {
             </div>
             {/* Round summary strip */}
             <div className="flex gap-3 flex-wrap pt-1">
-              {payload.rounds.map(r => (
+              {payload.rounds.filter(r => r.round_number <= currentRound).map(r => (
                 <span key={r.round_number} className="text-[10px] font-mono text-muted-foreground/60">
                   R{r.round_number}: {pct(r.opening_price)}→{pct(r.closing_price)}
                   {" "}(bmk {pct(r.benchmark)})
@@ -448,8 +448,8 @@ export default function AbmWatch() {
                 {tradeFeed.length === 0 && (
                   <p className="text-[10px] font-mono text-muted-foreground/40">No trades yet</p>
                 )}
-                {tradeFeed.map((t, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px] font-mono">
+                {tradeFeed.map((t) => (
+                  <div key={`${t.participant_id}-${t.t_ms}`} className="flex items-center gap-2 text-[11px] font-mono">
                     <span className="text-muted-foreground/40 w-6 shrink-0">{t.participant_id}</span>
                     <span className="px-1 border border-border text-[9px] text-muted-foreground/60 shrink-0">
                       {t.profile}
