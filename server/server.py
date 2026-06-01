@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import socketio
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -1110,21 +1110,34 @@ async def emergency_session_close(
 
 @fastapi_app.get("/abm/watch/run")
 async def abm_watch_run(
-    seed: int = 42,
-    subject_count: int = 9,
-    profile_mix: str = "rational:5,herder:2,noise:2",
-    b: float = 36.0,
-    market_number: int = 1,
+    seed: int = Query(default=42, ge=0),
+    subject_count: int = Query(default=9, ge=2, le=50),
+    profile_mix: str = Query(default="rational:5,herder:2,noise:2"),
+    b: float = Query(default=36.0, gt=0),
+    market_number: int = Query(default=1, ge=1, le=4),
 ) -> JSONResponse:
+    """Run a single ABM market and return a replay payload.
+
+    Intentionally unauthenticated — for calibration and visualization demos only.
+    Returns: market metadata, bot roster, round summaries, full trade tape.
+    """
     from calibration.abm.watch import run_single_market
     loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: run_single_market(
-        seed=seed,
-        market_number=market_number,
-        subject_count=subject_count,
-        profile_mix=profile_mix,
-        b=b,
-    ))
+    try:
+        payload = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: run_single_market(
+                seed=seed,
+                market_number=market_number,
+                subject_count=subject_count,
+                profile_mix=profile_mix,
+                b=b,
+            )),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Simulation timeout (>120s)")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return JSONResponse(content=payload)
 
 
