@@ -385,9 +385,10 @@ class Orchestrator:
             if market is None:
                 raise ValueError("No open market")
 
-            seed = hashlib.sha256(f"{session_id}:{market.id}:resolve".encode("utf-8")).hexdigest()[:16]
-            rng = random.Random(seed)
-            outcome = 1 if rng.random() < float(market.true_probability) else 0
+            # Use the same latent market truth that signal draws use so information quality
+            # is about the resolved payout outcome rather than an independent variable.
+            seed = hashlib.sha256(f"{session_id}:{market.id}:truth".encode("utf-8")).hexdigest()[:16]
+            outcome = self._draw_market_truth(session_id, market.id, float(market.true_probability))
             resolution = MarketResolution(market_id=market.id, outcome=outcome, rng_seed=seed)
             db.add(resolution)
 

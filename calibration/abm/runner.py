@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import heapq
+import random
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, select
@@ -10,8 +15,8 @@ from sqlalchemy.pool import StaticPool
 
 from calibration.abm.agents import Agent
 from calibration.abm.config import SimConfig
-from calibration.abm.profiles import PROFILE_PRESETS, BehavioralProfile, assign_profiles
-from server.db_models import Base, Market, MarketRole, Round, Signal
+from calibration.abm.profiles import PROFILE_PRESETS, BehavioralProfile, apply_risk_aversion, assign_profiles, assign_risk_aversion
+from server.db_models import Base, Market, MarketRole, Round, Signal, Trade
 from server.orchestrator import Orchestrator
 
 
@@ -56,13 +61,26 @@ def _build_session_factory(database_url: str) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
 
-def _load_round_snapshot(
+def _seed(
+    *,
+    session_id: int,
+    market_id: int,
+    round_id: int,
+    participant_id: str,
+    step: str,
+) -> str:
+    material = f"{session_id}:{market_id}:{round_id}:{participant_id}:{step}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_event_snapshot(
     db_factory: sessionmaker[Session],
     *,
     session_id: int,
     market_number: int,
     round_number: int,
-) -> tuple[int, float, float, float, dict[str, MarketRole], dict[str, Signal]]:
+    participant_id: str,
+) -> tuple[int, int, float, float, float, MarketRole, Signal | None]:
     with db_factory() as db:
         market = db.scalar(
             select(Market).where(
@@ -80,18 +98,77 @@ def _load_round_snapshot(
         )
         if round_row is None:
             raise ValueError("round not found")
-        roles = db.scalars(select(MarketRole).where(MarketRole.market_id == market.id)).all()
-        signals = db.scalars(select(Signal).where(Signal.round_id == round_row.id)).all()
-        role_map = {r.participant_id: r for r in roles}
-        signal_map = {s.participant_id: s for s in signals}
+        role = db.scalar(
+            select(MarketRole).where(
+                MarketRole.market_id == market.id,
+                MarketRole.participant_id == participant_id,
+            )
+        )
+        if role is None:
+            raise ValueError("market role not found")
+        signal = db.scalar(
+            select(Signal).where(
+                Signal.round_id == round_row.id,
+                Signal.participant_id == participant_id,
+            )
+        )
+
         return (
             market.id,
+            round_row.id,
             float(market.q_yes),
             float(market.q_no),
             float(market.b_parameter),
-            role_map,
-            signal_map,
+            role,
+            signal,
         )
+
+
+def _set_trade_timestamp(
+    db_factory: sessionmaker[Session],
+    *,
+    trade_id: int,
+    executed_at: datetime,
+) -> None:
+    with db_factory() as db:
+        trade_row = db.scalar(select(Trade).where(Trade.id == trade_id))
+        if trade_row is None:
+            return
+        trade_row.executed_at = executed_at
+        db.commit()
+
+
+def _clip(value: float, lo: float, hi: float) -> float:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
+
+
+def _state_intensity(
+    *,
+    config: SimConfig,
+    belief: float,
+    current_price: float,
+    ema_abs_return: float,
+) -> float:
+    edge_i = _clip(abs(belief - current_price) / 0.5, 0.0, 1.0)
+    vol_t = _clip(ema_abs_return / config.vol_ref, 0.0, 1.0)
+    raw = config.lambda_base * (1.0 + config.edge_gain * (edge_i**config.edge_exp)) * (
+        1.0 + config.vol_gain * (vol_t**config.vol_exp)
+    )
+    return _clip(raw, config.lambda_min, config.lambda_max)
+
+
+def _proposal_rate(config: SimConfig) -> float:
+    if config.intensity_mode == "legacy_homogeneous":
+        return config.event_intensity
+    return config.lambda_max
+
+
+def _update_ema_abs_return(*, current: float, abs_return: float, alpha: float) -> float:
+    return alpha * abs_return + (1.0 - alpha) * current
 
 
 def _run_market_round(
@@ -102,49 +179,155 @@ def _run_market_round(
     market_number: int,
     round_number: int,
     agents: dict[str, Agent],
+    config: SimConfig,
+    on_trade: Callable | None = None,
 ) -> None:
     round_row = orch.start_round(session_id, round_number)
-    market_id, q_yes, q_no, b, role_map, signal_map = _load_round_snapshot(
-        db_factory,
-        session_id=session_id,
-        market_number=market_number,
-        round_number=round_number,
-    )
-    for participant_id in sorted(agents):
-        role = role_map[participant_id]
-        signal = signal_map.get(participant_id)
-        agent = agents[participant_id]
-        current_price = 0.5
-        if b > 0:
-            from server import lmsr
+    proposal_rate = _proposal_rate(config)
+    if proposal_rate <= 0:
+        orch.end_round(session_id)
+        return
 
-            current_price = lmsr.price(q_yes, q_no, b)
+    gap_rngs: dict[str, random.Random] = {}
+    accept_rngs: dict[str, random.Random] = {}
+    accepted_event_index: dict[str, int] = {}
+    event_heap: list[tuple[float, str, int]] = []
+    for participant_id in sorted(agents):
+        gap_rng = random.Random(
+            _seed(
+                session_id=session_id,
+                market_id=round_row.market_id,
+                round_id=round_row.id,
+                participant_id=participant_id,
+                step="arrivals_gap" if config.intensity_mode == "state_hybrid" else "arrivals",
+            )
+        )
+        gap_rngs[participant_id] = gap_rng
+        accept_rngs[participant_id] = random.Random(
+            _seed(
+                session_id=session_id,
+                market_id=round_row.market_id,
+                round_id=round_row.id,
+                participant_id=participant_id,
+                step="arrivals_accept",
+            )
+        )
+        accepted_event_index[participant_id] = 0
+        first_t = gap_rng.expovariate(proposal_rate)
+        if first_t <= config.round_duration_s:
+            heapq.heappush(event_heap, (first_t, participant_id, 0))
+
+    round_base = datetime.now(timezone.utc)
+    trade_seq = 0
+    ema_abs_return = 0.0
+
+    while event_heap:
+        event_time_s, participant_id, candidate_index = heapq.heappop(event_heap)
+        try:
+            market_id, db_round_id, q_yes, q_no, b, role, signal = _load_event_snapshot(
+                db_factory,
+                session_id=session_id,
+                market_number=market_number,
+                round_number=round_number,
+                participant_id=participant_id,
+            )
+        except ValueError:
+            continue
+
+        agent = agents[participant_id]
+
+        from server import lmsr
+
+        current_price = lmsr.price(q_yes, q_no, b) if b > 0 else 0.5
+        event_index = accepted_event_index[participant_id]
+        if config.intensity_mode == "state_hybrid":
+            intensity = _state_intensity(
+                config=config,
+                belief=float(agent.belief),
+                current_price=current_price,
+                ema_abs_return=ema_abs_return,
+            )
+            if accept_rngs[participant_id].random() > (intensity / config.lambda_max):
+                next_t = event_time_s + gap_rngs[participant_id].expovariate(proposal_rate)
+                if next_t <= config.round_duration_s:
+                    heapq.heappush(event_heap, (next_t, participant_id, candidate_index + 1))
+                continue
+
         agent.update_belief(
             session_id=session_id,
             market_id=market_id,
-            round_id=round_row.id,
+            round_id=db_round_id,
             current_price=current_price,
             signal_value=signal.signal_value if signal is not None else None,
             signal_theta=float(signal.theta) if signal is not None else None,
             signal_delivered=bool(signal.delivered) if signal is not None else False,
+            event_index=event_index,
         )
+        accepted_event_index[participant_id] = event_index + 1
+
         trades = agent.decide(
             session_id=session_id,
             market_id=market_id,
-            round_id=round_row.id,
+            round_id=db_round_id,
             q_yes=q_yes,
             q_no=q_no,
             b=b,
             balance=float(role.starting_balance),
+            yes_held=float(role.yes_held),
+            no_held=float(role.no_held),
+            event_index=event_index,
+            edge_threshold=config.edge_threshold,
+            sell_propensity=config.sell_propensity,
+            order_size_dist=config.order_size_dist,
         )
+
         for trade in trades:
             try:
                 result = orch.record_trade(session_id, participant_id, trade)
             except ValueError:
                 continue
-            q_yes = result.q_yes_after
-            q_no = result.q_no_after
-            role.starting_balance = result.balance_after
+
+            if config.intensity_mode == "state_hybrid":
+                price_move = abs(float(result.price_after) - float(result.price_before))
+                ema_abs_return = _update_ema_abs_return(
+                    current=ema_abs_return,
+                    abs_return=price_move,
+                    alpha=config.vol_ema_alpha,
+                )
+
+            executed_at = round_base + timedelta(seconds=event_time_s, microseconds=trade_seq)
+            trade_seq += 1
+            _set_trade_timestamp(
+                db_factory,
+                trade_id=result.trade_id,
+                executed_at=executed_at,
+            )
+
+            if on_trade is not None:
+                on_trade(
+                    {
+                        "round_number": round_number,
+                        "event_time_s": event_time_s,
+                        "participant_id": participant_id,
+                        "profile": agent.profile.name,
+                        "side": trade.side,
+                        "direction": trade.direction,
+                        "quantity": trade.quantity,
+                        "price_before": result.price_before,
+                        "price_after": result.price_after,
+                        "q_yes_after": result.q_yes_after,
+                        "q_no_after": result.q_no_after,
+                        "balance_after": result.balance_after,
+                        "yes_held": result.yes_held,
+                        "no_held": result.no_held,
+                        "belief": float(agent.belief),
+                    }
+                )
+
+        next_t = event_time_s + gap_rngs[participant_id].expovariate(proposal_rate)
+        if next_t <= config.round_duration_s:
+            heapq.heappush(event_heap, (next_t, participant_id, candidate_index + 1))
+
     orch.end_round(session_id)
 
 
@@ -176,8 +359,19 @@ def run_session(
     session_index: int,
 ) -> int:
     participants = _canonical_participants(config.subject_count)
-    assignments = _apply_risk_override(assign_profiles(participants, config.profile_mix), config.risk_aversion)
+    assigned = assign_profiles(participants, config.profile_mix)
+    risk_draws = assign_risk_aversion(
+        participants,
+        mean=config.ra_mean,
+        sd=config.ra_sd,
+        lo=config.ra_lo,
+        hi=config.ra_hi,
+        seed=config.seed + session_index,
+    )
+    assignments = apply_risk_aversion(assigned, risk_draws)
+    assignments = _apply_risk_override(assignments, config.risk_aversion)
     agents = {pid: Agent(participant_id=pid, profile=assignments.get(pid, PROFILE_PRESETS["rational"])) for pid in participants}
+
     session_id = orch.start_session(
         label=f"abm-{config.seed}-{session_index + 1}",
         rotation_id=config.rotation_id + session_index,
@@ -198,6 +392,7 @@ def run_session(
             market_number=Orchestrator.PRACTICE_MARKET_NUMBER,
             round_number=1,
             agents=agents,
+            config=config,
         )
         orch.close_practice_market(session_id)
 
@@ -213,6 +408,7 @@ def run_session(
                 market_number=market_number,
                 round_number=round_number,
                 agents=agents,
+                config=config,
             )
         orch.resolve_market(session_id)
     orch.close_session(session_id)

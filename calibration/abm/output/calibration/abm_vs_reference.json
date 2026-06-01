@@ -1,0 +1,72 @@
+{
+  "gate_pass": true,
+  "modeled": {
+    "median_order_size": 1.0,
+    "negative_cost_share": 0.2912966252220249,
+    "non_empty_markets_per_session_min": 4.0,
+    "non_practice_trade_count": 1689.0,
+    "q25_order_size": 1.0,
+    "q75_order_size": 6.0,
+    "quantity_per_agent_round": 36.93333333333333,
+    "sell_share": 0.2912966252220249,
+    "trades_per_agent_round": 9.383333333333333
+  },
+  "primary_gate": {
+    "all_four_markets_active": true,
+    "median_order_size": true,
+    "negative_cost_share": true,
+    "quantity_per_agent_round": true,
+    "sell_share": true,
+    "trades_per_agent_round": true
+  },
+  "ratios": {
+    "median_order_size": 1.0,
+    "negative_cost_share": 1.0024910551788782,
+    "quantity_per_agent_round": 0.6147018030513175,
+    "sell_share": 1.0024910551788782,
+    "trades_per_agent_round": 1.0077565632458232
+  },
+  "reference": {
+    "export_alignment_rows": 3352,
+    "median_order_size": 1.0,
+    "negative_cost_share": 0.2905727923627685,
+    "non_empty_markets_per_session_min": 4,
+    "non_practice_trade_count": 3352,
+    "q25_order_size": 1.0,
+    "q75_order_size": 10.0,
+    "quantity_per_agent_round": 60.083333333333336,
+    "sell_share": 0.2905727923627685,
+    "trades_per_agent_round": 9.311111111111112
+  },
+  "score": 0.49932055290553984,
+  "simulation_report": {
+    "aggregate": {
+      "convergence_lag_mean": 1.0,
+      "info_revelation_corr_mean": 0.9843608417453515,
+      "informed_return_ratio_mean": -0.42404545833333335,
+      "price_mse_vs_benchmark": 0.05586244288493267,
+      "price_mse_vs_truth": 0.10340097400565786,
+      "price_path_variance": 0.06926920973821658,
+      "trading_volume_total": 6722.0,
+      "treatment_effect_return_ratio": -0.5349950166666667,
+      "uninformed_return_ratio_mean": 0.11094955833333332
+    },
+    "per_session": [
+      {
+        "convergence_lag_mean": 1.0,
+        "info_revelation_corr_mean": 0.9843608417453515,
+        "informed_return_ratio_mean": -0.42404545833333335,
+        "price_mse_vs_benchmark": 0.05586244288493267,
+        "price_mse_vs_truth": 0.10340097400565786,
+        "price_path_variance": 0.06926920973821658,
+        "session_id": 1,
+        "trading_volume_total": 6722.0,
+        "treatment_effect_return_ratio": -0.5349950166666667,
+        "uninformed_return_ratio_mean": 0.11094955833333332
+      }
+    ],
+    "session_ids": [
+      1
+    ]
+  }
+}

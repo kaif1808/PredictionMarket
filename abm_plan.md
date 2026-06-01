@@ -1,224 +1,198 @@
-Valdoria Synthetic Observation ABM — Full Experiment Replication
+ABM Continuous-Time Recalibration (experiment_1 / export_1 anchored)
 
  Context
 
- Analysis/calibration work currently depends on live human sessions or the thin toy loop in
- calibration/simulate_market.py. We want an offline agent-based simulator that fully
- replicates the online human experiment to produce comparable datasets for analysis
- development.
+ The ABM (calibration/abm/) headlessly replays the real server/ orchestrator with
+ synthetic agents standing in for humans. Today it trades single-pass per round
+ (one deterministic sweep, agents sorted by id) and is buys-only — agents never sell,
+ so no negative-cost trades ever appear. Defaults (b=18, 9 agents, treated=3) were guesses,
+ not anchored to data.
 
- The key architectural decision (revised after review): rather than reimplement market logic
- in a parallel loop, the ABM drives the real server/orchestrator.py Orchestrator with
- software agents standing in for human participants. It calls the exact same lifecycle methods
- the live socket/HTTP layer calls, writes the exact same DB rows, then exports via the existing
- analysis/export_session_metrics.py. Datasets are comparable by construction because they
- flow through identical code paths.
+ We now have real reference data:
+ - experiment_1/ — full DB dump of 2 human sessions: 9 agents, b=36, treated_count=3,
+ 4 real markets/session (scenarios C/A/B/D, true_prob 0.5/0.75/0.25/0.65), 3,459 trades.
+ Empirical order flow: median order size 1, mean 6.47, max 20; buy/sell ≈ 58/42;
+ 28.7% of trades have cost < 0 (sells returning cash).
+ - export_1/ — derived real-markets-only subset (practice excluded), used as the
+ cross-check that target extraction matches the live export schema.
 
- Database: SQLite, no PostgreSQL, no setup
+ Goal: make the ABM produce human-like order flow (small-order-heavy, two-sided, continuous
+ intra-round activity) and calibrate it against these references, with a reproducible
+ scoring + acceptance-gate harness. Validation runs at 9 agents (1:1 with reference,
+ no normalization), and a separate 24-agent production config is exposed for scale-up.
 
- Confirmed from tests/conftest.py + tests/test_full_session_flow.py: the orchestrator is
- already driven against SQLite via Base.metadata.create_all() — no alembic, no Postgres,
- no server. SQLite is stdlib (in-memory or a throwaway file). The ABM uses the same approach:
- ephemeral SQLite is just transport; CSVs are the deliverable. The user never installs or
- runs a database.
+ Decisions locked (from user)
 
- Decisions locked with user
+ 1. Cohort: keep a 9-agent validation config (direct 1:1 comparison to reference) AND
+ a 24-agent production config (treated=8 ≈ 33%, b=36). Calibration fits on 9-agent;
+ 24-agent is a scaled deployment whose per-agent metrics are sanity-checked against the
+ same per-agent bands.
+ 2. Risk aversion: per-agent truncated normal clamped to [min,max]; calibration sweeps
+ the truncnorm params (mean/sd) and/or bounds.
+ 3. Golden tests: replace single-pass with continuous-time as the only code path;
+ regenerate golden snapshots. No back-compat flag.
+ 4. Returns: total/leaderboard "return" is net of initial endowment
+ (final_balance - endowment), consistent with sim_metrics ratio already being
+ (final-endowment)/endowment.
 
- - Full replication via the real Orchestrator (not a reimplemented in-memory loop).
- - SQLite (ephemeral file/in-memory), export to CSV. No Postgres.
- - 2 role tiers (uninformed | informed, θ=0.85) — matches current server/roles.py.
- - 5 rounds per market (DB constraint round_number BETWEEN 1 AND 5; full-flow test loops 1..5).
- - risk_aversion and LMSR b are the primary tunable/sweepable knobs; other behavioral
- params (bias, stubbornness, expertise, market_imitation, budget_variance) are profile-defined.
- - Keep simulate_market.py + b_sweep.py untouched; build new calibration/abm/ package.
+ Key facts that shape the implementation (verified)
 
- How the real engine is driven (verified facts)
+ - Sells need NO engine change. TradeRequest.side already accepts "sell"
+ (server/events.py:104); record_trade applies side_sign=-1 and guards short-sells
+ (server/orchestrator.py:304-310). Selling held inventory yields cost<0 automatically.
+ - Order size is hard-capped 1–20 by TradeRequest.quantity (events.py:106). Matches the
+ reference max of 20. Large trades must be split into ≤20 chunks (already done in agents.py:112-118).
+ - State is already re-read per trade. record_trade reloads market q_yes/q_no with
+ with_for_update() each call, so "continually exposed to current price" is satisfied by simply
+ calling decide() repeatedly within a round and feeding back the returned state.
+ - ABM reuses real lmsr/bayesian/roles/orchestrator — do not reimplement market math.
 
- - Orchestrator(db_session_factory, tournament_tie_break_mode="shared_prize", lmsr_b_parameter=18.0).
- - Lifecycle (from tests/test_full_session_flow.py):
- start_session(label, rotation_id, subject_count, treated_count=3, lmsr_b_parameter=36.0, show_tournament_payout_screen=True)
- -> session_id;
- start_market(session_id, market_number, is_practice=False) -> Market;
- start_round(session_id, round_number) -> Round;
- record_trade(session_id, participant_id, TradeRequest) -> TradeResult;
- end_round(session_id) -> Round; resolve_market(session_id) -> MarketResolution;
- close_session(session_id) -> list[TournamentRanking].
- - start_session auto-creates participants P01..PNN + ParticipantSession rows. No join
- tokens needed for headless driving — pass "P01" etc. straight to record_trade.
- - start_market writes Market + one MarketRole per participant (role/endowment from
- roles.get_assignment). start_round draws + persists real Signal rows via
- bayesian.draw_for_round (delivered flag per stage/role). end_round writes closing_price
-   - bayesian_benchmark. resolve_market draws outcome (sha256(f"{sid}:{mid}:resolve")),
- writes MarketResolution + final_balance per role. close_session writes
- TournamentRanking.
- - Orchestrator emits ZERO socket.io events — fully driveable headless.
- - TradeRequest (server/events.py): side: "buy"|"sell"="buy", direction: "yes"|"no",
- quantity: int Field(ge=1, le=20) → agents must split larger desired size into ≤20 chunks.
- - Agents read their own signal back from DB after start_round:
- select(Signal).where(Signal.round_id==rid, Signal.participant_id==pid); use
- signal_value/theta/posterior only when signal.delivered is True.
- - Practice market (market_number=0, PRACTICE_MARKET_NUMBER) optional; closed via
- close_practice_market. Include for fidelity (live sessions run it), but trades there are
- excluded from tournament.
+ ---
+ Implementation
 
- File Layout (all new)
+ 1. Continuous-time round runner — calibration/abm/runner.py
 
- calibration/abm/
-   __init__.py
-   profiles.py        # BehavioralProfile dataclass + presets + mix parser
-   agents.py          # Agent belief state + decide() -> list[TradeRequest] (pure given inputs)
-   runner.py          # builds SQLite DB, drives Orchestrator end-to-end with agents
-   export.py          # thin wrapper: run analysis/export_session_metrics for each session
-   sim_metrics.py     # power_prediction-style cross-session metrics (wraps analysis/)
-   config.py          # SimConfig dataclass + YAML/JSON load + profile assignment
-   cli.py             # argparse entrypoint
+ Replace the single deterministic sweep in _run_market_round() (lines 97-148) with a
+ virtual-clock event loop over t ∈ [0, round_duration_s] (default 90s simulated):
 
- Import pattern: ROOT = Path(__file__).resolve().parents[2]; sys.path.insert(0, str(ROOT)).
- DB wiring: point server.db at an ephemeral SQLite URL (temp file, or :memory: with a
- single shared connection) before constructing the Orchestrator, then reuse
- server.db.SessionLocal so the existing exporter/analysis.load.load_session read the same DB.
+ - Build a merged event stream: each agent draws inter-arrival gaps from an exponential process
+ (rate = event_intensity per agent), producing (t, participant_id, event_index) events.
+ Process events in ascending t.
+ - At each event: reload that agent's live snapshot (market q_yes/q_no via the orchestrator's
+ current DB state, the agent's balance/holdings from its MarketRole row, signal/posterior),
+ call agent.update_belief(...) then agent.decide(...), and submit any returned
+ TradeRequests through orch.record_trade() (unchanged). Cache nothing stale — read fresh.
+ - Persist the virtual timestamp on each trade. Trade.executed_at is the natural column;
+ set it from a base time + t so exported rows carry monotonic simulated time. No wall-clock
+ sleeping — the loop runs as fast as the CPU allows.
+ - Determinism: the per-agent arrival process is seeded from
+ _seed(session, market, round, participant, step="arrivals"); each decision uses
+ step=f"decide:{event_index}" and belief uses step=f"belief:{event_index}". Event ordering
+ is fully determined by seeds, so the whole session stays reproducible.
+ - Keep the existing market/round structure in run_session() (4 real markets × 5 rounds,
+ optional practice). Only the intra-round body changes.
 
- 1. Behavioral profiles — profiles.py
+ 2. Two-sided agent policy — calibration/abm/agents.py
 
- @dataclass(frozen=True)
- class BehavioralProfile:
-     name: str
-     risk_aversion: float      # [0,1] fraction of affordable size NOT used   (TUNABLE knob)
-     bias: float               # [-0.3,0.3] additive nudge to initial belief
-     stubbornness: float       # [0,1] damping of Bayesian updates
-     expertise: float          # [0,1] signal-interpretation fidelity (1=perfect)
-     market_imitation: float   # [0,1] pull of belief toward market price
-     budget_variance: float    # [0,1] per-agent jitter on trade size
- Presets: rational, noise, herder, stubborn, overreact.
- parse_mix("rational:5,herder:2,noise:2") → per-participant profile assignment (deterministic).
+ Extend decide() (lines 74-118) to emit buy, sell, or hold:
 
- 2. Agents — agents.py
+ - Edge & direction: keep p = lmsr.price(...), edge = belief - p. Buy the side the agent
+ believes underpriced; sell held inventory of a side when belief has moved against it
+ (reversal/unwind) or to take profit. Selling requires yes_held/no_held > 0 (engine enforces
+ it too).
+ - Small-order-heavy sizing: replace the single target_qty with a draw from a config
+ order-size distribution skewed toward 1 (reference median=1, mean≈6.5). E.g. geometric /
+ truncated-power-law on [1,20] with an occasional larger draw; scale the probability of
+ acting and size by (1-risk_aversion), edge, and remaining affordable/held quantity.
+ - Sell propensity: a sell_propensity knob governs how readily an agent unwinds; this is
+ the lever that pushes the cost<0 share toward the reference 28.7%.
+ - Preserve the no-trade band (|edge| < edge_threshold), affordability clamp
+ (lmsr.max_purchasable), and ≤20 chunk splitting.
+ - Seeds now include event_index (see §1) so repeated intra-round events differ.
 
- Agent holds belief (carried across rounds within a market) and reads live state each round
- (its delivered Signal, current MarketRole balance/holdings, market price). Per-(agent,round)
- RNG seeded sha256(f"{sid}:{mid}:{rid}:{pid}:{profile.name}")[:16] for order-independence.
+ 3. Heterogeneous risk aversion — calibration/abm/profiles.py + config.py
 
- Belief init (per market): clamp(0.5 + bias, 0.01, 0.99).
- Belief update (per round) — only if a delivered signal exists:
- theta_eff = clamp(0.5 + (theta-0.5)*expertise, 0.51, 0.99)
- if rng.random() > expertise: s = flip(s)                       # misread
- raw_post = bayesian.update_posterior(prior=belief, signal=s, theta=theta_eff)
- post     = belief + (1-stubbornness)*(raw_post - belief)
- belief   = clamp(post + market_imitation*(p - post), 0.01, 0.99)   # p = lmsr.price
- No delivered signal → only the imitation pull toward p applies.
+ - Add assign_risk_aversion(participant_ids, *, mean, sd, lo, hi, seed) sampling a
+ truncated normal per agent (deterministic, seeded). Apply over the existing profile
+ presets, overriding each profile's risk_aversion per-agent.
+ - This supersedes the current single scalar override in runner.py:151-168.
 
- Decision decide(...) -> list[TradeRequest] (respects engine constraints):
- p = lmsr.price(q_yes, q_no, b)
- direction = "yes" if belief > p else "no"
- edge = abs(belief - p)
- if edge < 0.02: return []                                       # no-trade band
- affordable = lmsr.max_purchasable(q_yes, q_no, balance, direction, b)
- size_frac  = (1 - risk_aversion) * min(1.0, edge/0.5)
- jitter     = 1.0 + budget_variance*(rng.random()*2 - 1)
- target_qty = clamp(int(floor(affordable*size_frac*jitter)), 0, affordable)
- # split into TradeRequest chunks of <=20 (engine cap); recompute price/affordability
- # between chunks is unnecessary since record_trade re-validates and we stay <= affordable
- return [TradeRequest(direction=direction, quantity=q) for q in chunks_of_20(target_qty)]
- v1 is buys-only (sufficient for all metrics; matches engine no-short-sell guard). Each chunk
- goes through record_trade, which re-validates funds/short-sell — agents stay within limits so
- no INSUFFICIENT_FUNDS/SHORT_SELL errors arise; defensive try/except logs+skips if they do.
+ 4. Config / defaults — calibration/abm/config.py
 
- 3. Runner — runner.py
+ Extend SimConfig (lines 9-21). New continuous-time + heterogeneity knobs (with defaults that
+ reproduce the reference order flow once calibrated):
 
- def run_session(orch, db_factory, config, profile_assignments) -> int   # returns session_id
- Drives the real Orchestrator, mirroring tests/test_full_session_flow.py:
- sid = orch.start_session(label, rotation_id, subject_count, treated_count, lmsr_b_parameter=b)
- # optional practice market:
- if config.include_practice:
-     orch.start_market(sid, 0, is_practice=True); orch.start_round(sid, 1)
-     <agents trade>; orch.end_round(sid); orch.close_practice_market(sid)
- for market_number in 1..4:
-     orch.start_market(sid, market_number)
-     init each agent.belief for this market
-     for round_number in 1..5:
-         round_row = orch.start_round(sid, round_number)     # signals persisted here
-         with db_factory() as db:
-             load each agent's delivered Signal + MarketRole(balance,yes_held,no_held) + Market(q_yes,q_no)
-         for pid in sorted(participants):                     # deterministic order
-             update agent belief; trades = agent.decide(...)
-             for tr in trades: orch.record_trade(sid, pid, tr)
-         orch.end_round(sid)
-     orch.resolve_market(sid)
- orch.close_session(sid)
- Each call re-reads fresh state from DB so agents react to real prices/signals the engine
- produced. num_sessions>1 varies rotation_id/session label and reuses one DB (distinct
- session_ids), or one DB per session.
+ round_duration_s: float = 90.0        # simulated, not wall-clock
+ event_intensity: float = ...          # per-agent arrival rate (Hz of virtual events)
+ order_size_dist: str = ...            # name + params for 1-skewed sizing
+ sell_propensity: float = ...          # drives cost<0 share
+ edge_threshold: float = 0.02          # no-trade band (existing 0.02)
+ ra_mean / ra_sd / ra_lo / ra_hi       # truncnorm risk-aversion params
 
- 4. Export — export.py
+ Provide two named presets (helper constructors or JSON configs under calibration/abm/):
+ - validation: subject_count=9, treated_count=3, b=36.0 (matches experiment_1).
+ - production: subject_count=24, treated_count=8, b=36.0.
 
- Reuse the existing exporter directly: for each generated session_id, invoke
- analysis/export_session_metrics.py (its load_session(session_id) reads the same SQLite the
- orchestrator wrote). Produces the full existing CSV suite
- (session_<id>_price_accuracy.csv, _treatment_panel.csv, _benchmark_recompute.csv, etc.)
- plus the raw frames. No new export schema invented — comparability guaranteed.
+ Update validation in __post_init__ for the new fields.
 
- 5. Cross-session sim metrics — sim_metrics.py
+ 5. Calibration scoring + acceptance gate — new calibration/abm/calibrate.py (+ CLI)
 
- simulation_report(session_ids) -> dict, wrapping analysis/outcomes.py + analysis/metrics.py:
- price MSE vs truth (price_accuracy), MSE vs benchmark (price_path_deviation), convergence
- lag (convergence_speed), price-path variance (groupby var of closing_price), volume
- (trading_volume), treatment effect (informed_returns by role_tier), info revelation
- (information_revelation_correlation). Aggregates across sessions for parameter sweeps
- (risk_aversion × b). CLI can write these to the output dir.
+ Reuse existing infra; do not rebuild metrics from scratch:
+ - Target extractor extract_reference_targets(): load experiment_1/*.csv (real markets only,
+ matching export_1's practice-excluded subset) and compute per-agent-round targets:
+   - trades per agent-round, quantity per agent-round (primary, volume-first),
+   - order-size distribution (median + quantiles),
+   - sell-share / cost<0 share,
+   - per-market activity (all 4 non-practice markets non-empty).
+ Cross-check the extracted trade set against export_1/market_*_trades.csv for consistency
+ (row-count / id alignment) and fail loudly on mismatch.
+ - Scorer: run the ABM (9-agent validation config) via runner.run_abm, export via
+ export.export_session_outputs, derive the same per-agent metrics, and score each metric as a
+ band ratio (modeled / reference). Reuse sim_metrics.simulation_report for the
+ price/return/convergence side metrics.
+ - Sweep: grid/random over event_intensity, sell_propensity, order-size params, and
+ risk-aversion truncnorm params (mirror b_sweep.py's structure, but multi-knob).
+ - Acceptance gate: for each session profile, every primary per-agent volume metric within
+ 0.5×–1.5× of reference, non-zero activity in all 4 non-practice markets, and report
+ residual mismatch (no perfect-fit requirement).
 
- 6. CLI / config — config.py, cli.py
+ 6. CLI / outputs
 
- SimConfig: rotation_id=1, subject_count=9, treated_count=3, b=18.0, risk_aversion=None (override profile), seed=42,
- profile_mix="rational:5,herder:2,noise:2", num_sessions=1, include_practice=True, outdir="calibration/abm/output",
- db_path=":memory:".
- Flags primary (repo argparse convention), optional --config YAML/JSON overridden by flags:
- --rotation-id --subject-count --treated-count --b --risk-aversion --seed --profile-mix --num-sessions --no-practice --outdir
- --db-path --emit-metrics.
- --b and --risk-aversion are the headline sweep knobs (can accept comma lists for sweeps in
- a follow-up). Validate 2 <= treated_count <= subject_count (matches roles.get_assignment).
+ Add a calibration command (extend calibration/abm/cli.py or a sibling entry) that writes:
+ - leaderboard.csv — candidate params + scores, sorted.
+ - chosen_params.json — winning config.
+ - abm_vs_reference.json — chosen-config modeled metrics vs reference, per-metric band ratios,
+ gate pass/fail. "Total return" rows reported net of endowment.
 
- 7. Tests (new under tests/)
+ ---
+ Tests
 
- - tests/test_abm_agents.py — deterministic agent rules in isolation: bias+clamp on init;
- stubbornness=1→belief unchanged; market_imitation=1→belief==price; expertise=1 never
- misreads / expertise=0 flips deterministically; decide empty in no-trade band, correct
- side, never exceeds max_purchasable, splits >20 into ≤20 chunks; same seed→identical.
- - tests/test_abm_runner.py — run a full headless session via the real Orchestrator on SQLite;
- assert real rows written: 4 markets, 20 rounds, Signal rows present (delivered counts match
- stage rules), Trade rows respect quantity≤20 + funds, MarketResolution + final_balance set,
- TournamentRanking computed. (Mirrors test_full_session_flow shape but agent-driven.)
- - tests/test_abm_export_pipeline.py — after a session, run export_session_metrics /
- load_session + every outcomes.* without error; assert benchmark_recompute.abs_diff≈0
- and a comparable CSV suite is produced (proves dataset parity with live exports).
- - tests/test_abm_golden.py — fixed seed/rotation/subject/treated/b/profile-mix: assert exact
- per-market truths+outcomes (orchestrator seed formula), per-market final closing_price
- (~6dp), total trade count, per-tier mean return, total volume>0. Locks determinism.
+ Mirror existing conventions (tests/conftest.py autouse reset_db, SQLite tmp_path,
+ SQLAlchemy ORM assertions).
 
- Risks
+ - Agents (tests/test_abm_agents.py, extend): continuous-time event decisions deterministic
+ given seed+event_index; sell path valid (never short-sells beyond holdings, respects
+ balance); small-order-heavy sizing (median draw ≈ 1); hold when |edge|<threshold.
+ - Runner (tests/test_abm_runner.py, update): 9-agent and 24-agent runs both populate all
+ 4 real markets; both buy and sell (cost<0) trades appear; all trades 1≤qty≤20; no invalid
+ trades; virtual executed_at monotonic within a round.
+ - Calibration (new tests/test_abm_calibrate.py): extract_reference_targets matches known
+ experiment_1 counts and agrees with export_1; scorer band-ratio math correct; acceptance
+ gate passes on a calibrated config and fails on a deliberately off-target one.
+ - Golden (tests/test_abm_golden.py, regenerate): new pinned snapshot for continuous-time
+ defaults (new trade_count, closing prices, return ratios). Document that values changed because
+ single-pass→continuous + sells is a deliberate behavior change.
+ - Export pipeline (tests/test_abm_export_pipeline.py): keep the abs_diff ≤ 1e-9 benchmark
+ parity check; confirm raw trade export now contains negative-cost rows.
 
- - SQLite engine wiring: server.db must point at the ABM's SQLite before Orchestrator
- construction and the exporter must read the same DB. Handle via DATABASE_URL/server.db
- reuse; in-memory needs a single shared connection or use a temp file (simpler). Covered by
- export-pipeline test.
- - quantity≤20 cap: large positions need multiple trades; chunking handled in decide,
- asserted in agent test.
- - Empty-trade rounds (all agents in no-trade band) → flat price; golden test asserts volume>0.
- - stage-1 signals drawn with delivered=False → agents don't act on them; info-revelation
- metric yields no market-1 rows (matches real data).
- - Determinism vs engine RNG: orchestrator truth/resolve/signal seeds are fixed functions of
- ids; agent RNG seeded separately. Golden test pins the combined output.
+ Verification (end-to-end)
 
- Verification
-
- source .venv/bin/activate
- # generate synthetic sessions through the real engine + export CSVs
- python3 calibration/abm/cli.py --seed 42 --subject-count 9 --treated-count 3 \
-   --b 18.0 --num-sessions 1 --outdir calibration/abm/output --emit-metrics
- # ABM tests
+ # 1. Unit + integration suite green
  pytest tests/test_abm_agents.py tests/test_abm_runner.py \
-        tests/test_abm_export_pipeline.py tests/test_abm_golden.py -v
- # no regression to existing suite
- pytest
- Expected: real DB rows generated through the Orchestrator; full existing CSV export suite in
- outdir; all ABM tests green; full suite still 35+ green; benchmark_recompute.abs_diff ≈ 0
- confirming synthetic datasets are structurally identical to live exports.
+        tests/test_abm_golden.py tests/test_abm_export_pipeline.py \
+        tests/test_abm_calibrate.py -v
+
+ # 2. Extract reference targets and confirm experiment_1/export_1 agree
+ python3 -m calibration.abm.calibrate --extract-only   # prints per-agent targets
+
+ # 3. Run a calibration sweep; inspect leaderboard + gate
+ python3 -m calibration.abm.calibrate --config validation --sweep ...
+ #   -> writes leaderboard.csv, chosen_params.json, abm_vs_reference.json
+
+ # 4. Sanity: chosen config, all 4 markets active, buy+sell present, bands within 0.5x-1.5x
+ #   (read abm_vs_reference.json: every primary metric gate == pass)
+
+ # 5. Production scale-up runs clean
+ python3 -m calibration.abm.cli --config production --emit-metrics
+
+ Manual sanity check on the chosen run: median order size ≈ 1, cost<0 share ≈ 0.29,
+ buy/sell ≈ 58/42, all 4 non-practice markets non-empty.
+
+ Out of scope / assumptions
+
+ - Server/orchestrator/lmsr/bayesian untouched (sells already supported).
+ - "Continually exposed to current price" = repeated intra-round events with fresh state re-read,
+ not a continuous-derivative model.
+ - 90s round is simulated time only; execution is as-fast-as-CPU.
+ - 24-agent production is a deployment, not a fit target; the 9-agent config is the calibration
+ anchor (avoids the per-agent normalization assumption breaking under fixed b=36).

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,7 @@ PROFILE_PRESETS: dict[str, BehavioralProfile] = {
     "rational": BehavioralProfile(
         name="rational",
         risk_aversion=0.30,
-        bias=0.00,
+        bias=0.01,
         stubbornness=0.15,
         expertise=0.95,
         market_imitation=0.15,
@@ -27,7 +28,7 @@ PROFILE_PRESETS: dict[str, BehavioralProfile] = {
     "noise": BehavioralProfile(
         name="noise",
         risk_aversion=0.65,
-        bias=0.00,
+        bias=-0.12,
         stubbornness=0.20,
         expertise=0.55,
         market_imitation=0.45,
@@ -36,7 +37,7 @@ PROFILE_PRESETS: dict[str, BehavioralProfile] = {
     "herder": BehavioralProfile(
         name="herder",
         risk_aversion=0.45,
-        bias=0.00,
+        bias=0.08,
         stubbornness=0.30,
         expertise=0.75,
         market_imitation=0.70,
@@ -93,3 +94,42 @@ def assign_profiles(participant_ids: list[str], mix: str) -> dict[str, Behaviora
         profile = ordered[index] if index < len(ordered) else ordered[index % len(ordered)]
         assigned[pid] = profile
     return assigned
+
+
+def assign_risk_aversion(
+    participant_ids: list[str],
+    *,
+    mean: float,
+    sd: float,
+    lo: float,
+    hi: float,
+    seed: int,
+) -> dict[str, float]:
+    if lo >= hi:
+        raise ValueError("lo must be < hi")
+    if sd < 0:
+        raise ValueError("sd must be >= 0")
+
+    rng = random.Random(seed)
+    out: dict[str, float] = {}
+    for pid in sorted(participant_ids):
+        if sd == 0:
+            draw = mean
+        else:
+            draw = mean
+            for _ in range(1024):
+                candidate = rng.gauss(mean, sd)
+                if lo <= candidate <= hi:
+                    draw = candidate
+                    break
+            else:
+                draw = max(lo, min(hi, draw))
+        out[pid] = max(lo, min(hi, draw))
+    return out
+
+
+def apply_risk_aversion(
+    assigned: dict[str, BehavioralProfile],
+    risks: dict[str, float],
+) -> dict[str, BehavioralProfile]:
+    return {pid: replace(profile, risk_aversion=risks.get(pid, profile.risk_aversion)) for pid, profile in assigned.items()}
