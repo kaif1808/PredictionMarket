@@ -86,6 +86,7 @@ SPA_ROOT_ROUTES = (
     "/trade",
     "/debrief",
     "/admin",
+    "/abm-watch",
 )
 
 @fastapi_app.get("/app/")
@@ -1105,6 +1106,26 @@ async def emergency_session_close(
     _log_admin_action(db, session_id, "emergency_session_close", payload.reason)
     await sio.emit("session_closed", {"session_id": session_id}, room=_room_all(session_id))
     return {"ok": True, "forced": True, "rankings": len(rankings)}
+
+
+@fastapi_app.get("/abm/watch/run")
+async def abm_watch_run(
+    seed: int = 42,
+    subject_count: int = 9,
+    profile_mix: str = "rational:5,herder:2,noise:2",
+    b: float = 36.0,
+    market_number: int = 1,
+) -> JSONResponse:
+    from calibration.abm.watch import run_single_market
+    loop = asyncio.get_event_loop()
+    payload = await loop.run_in_executor(None, lambda: run_single_market(
+        seed=seed,
+        market_number=market_number,
+        subject_count=subject_count,
+        profile_mix=profile_mix,
+        b=b,
+    ))
+    return JSONResponse(content=payload)
 
 
 @fastapi_app.get("/admin/sessions/{session_id}/export.csv")

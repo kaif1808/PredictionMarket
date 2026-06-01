@@ -22,6 +22,7 @@ export default defineConfig({
       "/risk_elicitation": "http://127.0.0.1:8000",
       "/debrief": "http://127.0.0.1:8000",
       "/tournament": "http://127.0.0.1:8000",
+      "/abm": "http://127.0.0.1:8000",
       "/socket.io": {
         target: "http://127.0.0.1:8000",
         ws: true
