@@ -73,7 +73,10 @@ def test_run_single_market_determinism() -> None:
 def test_run_single_market_different_seeds_differ() -> None:
     r1 = run_single_market(seed=1)
     r2 = run_single_market(seed=2)
-    assert r1["trades"] != r2["trades"]  # extremely unlikely to be equal
+    # Trades must differ — the full event sequence is a function of the seed.
+    # Outcome equality is NOT asserted: both seeds can legitimately draw the same
+    # binary outcome from the same true_probability distribution.
+    assert r1["trades"] != r2["trades"]
 
 
 # ---------------------------------------------------------------------------
