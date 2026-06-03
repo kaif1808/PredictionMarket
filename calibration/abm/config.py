@@ -35,6 +35,8 @@ class SimConfig:
     lambda_min: float = 0.05
     lambda_max: float = 4.0
     order_size_dist: str = "geometric:p=0.68,tail=0.35"
+    reaction_delay_s: float = 0.65
+    reaction_delay_jitter_s: float = 0.35
     sell_propensity: float = 0.7799
     edge_threshold: float = 0.0139
 
@@ -78,6 +80,10 @@ class SimConfig:
             raise ValueError("sell_propensity must be in [0,1]")
         if self.edge_threshold < 0:
             raise ValueError("edge_threshold must be >= 0")
+        if self.reaction_delay_s < 0:
+            raise ValueError("reaction_delay_s must be >= 0")
+        if self.reaction_delay_jitter_s < 0:
+            raise ValueError("reaction_delay_jitter_s must be >= 0")
         if self.ra_sd < 0:
             raise ValueError("ra_sd must be >= 0")
         if not (0.0 <= self.ra_lo <= 1.0 and 0.0 <= self.ra_hi <= 1.0):

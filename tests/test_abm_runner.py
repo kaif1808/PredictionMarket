@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from calibration.abm.config import SimConfig, preset_config
-from calibration.abm.runner import _build_session_factory, _state_intensity, _update_ema_abs_return, run_abm
+from calibration.abm.runner import _build_session_factory, _next_decision_time, _state_intensity, _update_ema_abs_return, run_abm
 from server.db_models import Market, MarketResolution, MarketRole, Round, Signal, TournamentRanking, Trade
 
 
@@ -139,6 +139,29 @@ def test_state_intensity_bounds_and_monotonicity() -> None:
 def test_ema_update_formula() -> None:
     assert _update_ema_abs_return(current=0.0, abs_return=0.08, alpha=0.2) == 0.016
     assert _update_ema_abs_return(current=0.5, abs_return=0.1, alpha=1.0) == 0.1
+
+
+def test_next_decision_time_applies_hesitation_every_time() -> None:
+    import random
+
+    rng = random.Random(123)
+    delay = 0.8
+    jitter = 0.0
+    proposal_rate = 2.0
+    now = 0.0
+    gaps: list[float] = []
+    for _ in range(12):
+        nxt = _next_decision_time(
+            now_s=now,
+            gap_rng=rng,
+            proposal_rate=proposal_rate,
+            reaction_delay_s=delay,
+            reaction_delay_jitter_s=jitter,
+        )
+        gaps.append(nxt - now)
+        now = nxt
+
+    assert all(g >= delay for g in gaps)
 
 
 def test_state_hybrid_thinning_is_deterministic(tmp_path) -> None:

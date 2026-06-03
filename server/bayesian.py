@@ -9,7 +9,16 @@ from typing import Literal
 
 from server.roles import MarketAssignment
 
-SignalValue = Literal["H", "L"]
+SignalValue = Literal["S+", "M+", "N", "M-", "S-"]
+SIGNAL_SCORE: dict[SignalValue, int] = {
+    "S+": 2,
+    "M+": 1,
+    "N": 0,
+    "M-": -1,
+    "S-": -2,
+}
+
+SIGNAL_ORDER: tuple[SignalValue, ...] = ("S+", "M+", "N", "M-", "S-")
 
 
 @dataclass(frozen=True)
@@ -25,8 +34,19 @@ class SignalDraw:
 def draw_signal(true_outcome: int, theta: float, rng: Random) -> SignalValue:
     if theta <= 0.5 or theta >= 1.0:
         raise ValueError("theta must be in (0.5, 1.0)")
-    p_h = theta if true_outcome == 1 else 1.0 - theta
-    return "H" if rng.random() < p_h else "L"
+    if true_outcome not in (0, 1):
+        raise ValueError("true_outcome must be 0 or 1")
+    alpha = math.log(theta / (1.0 - theta)) / 4.0
+    direction = 1.0 if true_outcome == 1 else -1.0
+    weights = [math.exp(direction * alpha * SIGNAL_SCORE[s]) for s in SIGNAL_ORDER]
+    total = sum(weights)
+    cutoff = rng.random() * total
+    cumulative = 0.0
+    for signal, weight in zip(SIGNAL_ORDER, weights, strict=True):
+        cumulative += weight
+        if cutoff <= cumulative:
+            return signal
+    return SIGNAL_ORDER[-1] if true_outcome == 1 else SIGNAL_ORDER[0]
 
 
 def update_posterior(prior: float, signal: SignalValue, theta: float) -> float:
@@ -34,14 +54,24 @@ def update_posterior(prior: float, signal: SignalValue, theta: float) -> float:
         raise ValueError("prior must be in (0,1)")
     if theta <= 0.5 or theta >= 1.0:
         raise ValueError("theta must be in (0.5,1.0)")
+    if signal not in SIGNAL_SCORE:
+        raise ValueError(f"unknown signal value {signal}")
 
-    if signal == "H":
-        num = prior * theta
-        den = num + (1.0 - prior) * (1.0 - theta)
-    else:
-        num = prior * (1.0 - theta)
-        den = num + (1.0 - prior) * theta
+    alpha = math.log(theta / (1.0 - theta)) / 4.0
+    lr = math.exp(2.0 * alpha * SIGNAL_SCORE[signal])
+    num = prior * lr
+    den = num + (1.0 - prior)
     return num / den
+
+
+def informed_signal_theta(true_probability: float) -> float:
+    if not 0.0 <= true_probability <= 1.0:
+        raise ValueError("true_probability must be in [0,1]")
+    if true_probability <= 0.2 or true_probability >= 0.8:
+        return 0.65
+    if true_probability <= 0.35 or true_probability >= 0.65:
+        return 0.72
+    return 0.85
 
 
 def benchmark_price(prior: float, all_signals: list[tuple[str, float]]) -> float:
@@ -49,12 +79,13 @@ def benchmark_price(prior: float, all_signals: list[tuple[str, float]]) -> float
         raise ValueError("prior must be in (0,1)")
     log_odds = math.log(prior / (1.0 - prior))
     for signal_value, theta in all_signals:
-        if signal_value == "H":
-            log_odds += math.log(theta / (1.0 - theta))
-        elif signal_value == "L":
-            log_odds += math.log((1.0 - theta) / theta)
-        else:
+        if theta <= 0.5 or theta >= 1.0:
+            raise ValueError(f"invalid theta={theta}")
+        if signal_value not in SIGNAL_SCORE:
             raise ValueError(f"unknown signal value {signal_value}")
+        alpha = math.log(theta / (1.0 - theta)) / 4.0
+        lr = math.exp(2.0 * alpha * SIGNAL_SCORE[signal_value])
+        log_odds += math.log(lr)
     if log_odds >= 0:
         z = math.exp(-log_odds)
         return 1.0 / (1.0 + z)
@@ -87,6 +118,7 @@ def draw_for_round(
     round_id: int,
     market_roles: list[object],
     true_outcome: int,
+    true_probability: float,
     stage: int,
     prior_by_participant: dict[str, float] | None = None,
 ) -> list[SignalDraw]:
@@ -100,7 +132,7 @@ def draw_for_round(
             theta = 0.65
             delivered = False
         elif role == "informed":
-            theta = 0.85
+            theta = informed_signal_theta(true_probability)
             delivered = True
         else:
             continue

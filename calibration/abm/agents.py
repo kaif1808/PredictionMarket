@@ -22,9 +22,10 @@ def _seed(
     round_id: int,
     participant_id: str,
     profile_name: str,
+    sim_seed: int,
     step: str,
 ) -> str:
-    material = f"{session_id}:{market_id}:{round_id}:{participant_id}:{profile_name}:{step}"
+    material = f"{sim_seed}:{session_id}:{market_id}:{round_id}:{participant_id}:{profile_name}:{step}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
@@ -83,11 +84,39 @@ def _sample_order_size(rng: random.Random, spec: str, *, max_qty: int) -> int:
     return max(1, min(max_qty, rng.randint(1, max_qty)))
 
 
+def _sample_child_chunk_size(rng: random.Random, *, remaining: int) -> int:
+    """Split large parent orders into realistic child orders under the API cap.
+
+    Keeps each submitted TradeRequest quantity within [1, 20], but avoids
+    repeatedly emitting max-size (20) chunks when parent orders are large.
+    """
+    cap = max(1, min(20, int(remaining)))
+    if cap <= 3:
+        return cap
+
+    # Use a heavy-tailed draw to produce visibly large clips without forcing
+    # constant max-size prints.
+    draw = _sample_order_size(rng, "geometric:p=0.22,tail=0.55", max_qty=cap)
+    return max(1, min(cap, draw))
+
+
+def _mirror_signal(signal_value: str) -> str:
+    mirror = {
+        "S+": "S-",
+        "M+": "M-",
+        "N": "N",
+        "M-": "M+",
+        "S-": "S+",
+    }
+    return mirror.get(signal_value, signal_value)
+
+
 @dataclass
 class Agent:
     participant_id: str
     profile: BehavioralProfile
     belief: float = 0.5
+    sim_seed: int = 0
 
     def init_market(self) -> None:
         self.belief = _clamp(0.5 + self.profile.bias, 0.01, 0.99)
@@ -111,6 +140,7 @@ class Agent:
                 round_id=round_id,
                 participant_id=self.participant_id,
                 profile_name=self.profile.name,
+                sim_seed=self.sim_seed,
                 step=f"belief:{event_index}",
             )
         )
@@ -120,7 +150,7 @@ class Agent:
             theta_eff = _clamp(0.5 + (signal_theta - 0.5) * self.profile.expertise, 0.51, 0.99)
             realized_signal = signal_value
             if rng.random() > self.profile.expertise:
-                realized_signal = "L" if signal_value == "H" else "H"
+                realized_signal = _mirror_signal(signal_value)
             raw_post = bayesian.update_posterior(prior=self.belief, signal=realized_signal, theta=theta_eff)
             post = self.belief + (1.0 - self.profile.stubbornness) * (raw_post - self.belief)
 
@@ -172,6 +202,7 @@ class Agent:
                 round_id=round_id,
                 participant_id=self.participant_id,
                 profile_name=self.profile.name,
+                sim_seed=self.sim_seed,
                 step=f"decide:{event_index}",
             )
         )
@@ -209,7 +240,7 @@ class Agent:
         chunks: list[TradeRequest] = []
         remaining = qty
         while remaining > 0:
-            chunk = min(20, remaining)
+            chunk = _sample_child_chunk_size(rng, remaining=remaining)
             chunks.append(TradeRequest(side=action_side, direction=action_direction, quantity=chunk))
             remaining -= chunk
         return chunks

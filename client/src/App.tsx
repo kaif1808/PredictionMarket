@@ -100,6 +100,7 @@ export default function App() {
       <Route path="/debrief" element={<DebriefScreen />} />
       <Route path="/admin" element={<AdminPanel />} />
       <Route path="/abm-watch" element={<AbmWatch />} />
+      <Route path="/app/abm-watch" element={<AbmWatch />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

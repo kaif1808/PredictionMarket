@@ -1115,6 +1115,13 @@ async def abm_watch_run(
     profile_mix: str = Query(default="rational:5,herder:2,noise:2"),
     b: float = Query(default=36.0, gt=0),
     market_number: int = Query(default=1, ge=1, le=4),
+    scenario: str = Query(default="seeded"),
+    informed_only_count: int = Query(default=3, ge=0),
+    informed_whale_count: int = Query(default=0, ge=0),
+    whale_only_count: int = Query(default=0, ge=0),
+    order_size_dist: str = Query(default="geometric:p=0.68,tail=0.35"),
+    reaction_delay_s: float = Query(default=0.65, ge=0),
+    reaction_delay_jitter_s: float = Query(default=0.35, ge=0),
 ) -> JSONResponse:
     """Run a single ABM market and return a replay payload.
 
@@ -1131,6 +1138,13 @@ async def abm_watch_run(
                 subject_count=subject_count,
                 profile_mix=profile_mix,
                 b=b,
+                scenario=scenario,
+                informed_only_count=informed_only_count,
+                informed_whale_count=informed_whale_count,
+                whale_only_count=whale_only_count,
+                order_size_dist=order_size_dist,
+                reaction_delay_s=reaction_delay_s,
+                reaction_delay_jitter_s=reaction_delay_jitter_s,
             )),
             timeout=120.0,
         )

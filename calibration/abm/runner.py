@@ -63,13 +63,14 @@ def _build_session_factory(database_url: str) -> sessionmaker[Session]:
 
 def _seed(
     *,
+    sim_seed: int,
     session_id: int,
     market_id: int,
     round_id: int,
     participant_id: str,
     step: str,
 ) -> str:
-    material = f"{session_id}:{market_id}:{round_id}:{participant_id}:{step}"
+    material = f"{sim_seed}:{session_id}:{market_id}:{round_id}:{participant_id}:{step}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
@@ -171,6 +172,19 @@ def _update_ema_abs_return(*, current: float, abs_return: float, alpha: float) -
     return alpha * abs_return + (1.0 - alpha) * current
 
 
+def _next_decision_time(
+    *,
+    now_s: float,
+    gap_rng: random.Random,
+    proposal_rate: float,
+    reaction_delay_s: float,
+    reaction_delay_jitter_s: float,
+) -> float:
+    jitter = gap_rng.random() * reaction_delay_jitter_s
+    hesitation = reaction_delay_s + jitter
+    return now_s + hesitation + gap_rng.expovariate(proposal_rate)
+
+
 def _run_market_round(
     *,
     orch: Orchestrator,
@@ -199,6 +213,7 @@ def _run_market_round(
                 market_id=round_row.market_id,
                 round_id=round_row.id,
                 participant_id=participant_id,
+                sim_seed=config.seed,
                 step="arrivals_gap" if config.intensity_mode == "state_hybrid" else "arrivals",
             )
         )
@@ -209,11 +224,18 @@ def _run_market_round(
                 market_id=round_row.market_id,
                 round_id=round_row.id,
                 participant_id=participant_id,
+                sim_seed=config.seed,
                 step="arrivals_accept",
             )
         )
         accepted_event_index[participant_id] = 0
-        first_t = gap_rng.expovariate(proposal_rate)
+        first_t = _next_decision_time(
+            now_s=0.0,
+            gap_rng=gap_rng,
+            proposal_rate=proposal_rate,
+            reaction_delay_s=config.reaction_delay_s,
+            reaction_delay_jitter_s=config.reaction_delay_jitter_s,
+        )
         if first_t <= config.round_duration_s:
             heapq.heappush(event_heap, (first_t, participant_id, 0))
 
@@ -248,7 +270,13 @@ def _run_market_round(
                 ema_abs_return=ema_abs_return,
             )
             if accept_rngs[participant_id].random() > (intensity / config.lambda_max):
-                next_t = event_time_s + gap_rngs[participant_id].expovariate(proposal_rate)
+                next_t = _next_decision_time(
+                    now_s=event_time_s,
+                    gap_rng=gap_rngs[participant_id],
+                    proposal_rate=proposal_rate,
+                    reaction_delay_s=config.reaction_delay_s,
+                    reaction_delay_jitter_s=config.reaction_delay_jitter_s,
+                )
                 if next_t <= config.round_duration_s:
                     heapq.heappush(event_heap, (next_t, participant_id, candidate_index + 1))
                 continue
@@ -324,7 +352,13 @@ def _run_market_round(
                     }
                 )
 
-        next_t = event_time_s + gap_rngs[participant_id].expovariate(proposal_rate)
+        next_t = _next_decision_time(
+            now_s=event_time_s,
+            gap_rng=gap_rngs[participant_id],
+            proposal_rate=proposal_rate,
+            reaction_delay_s=config.reaction_delay_s,
+            reaction_delay_jitter_s=config.reaction_delay_jitter_s,
+        )
         if next_t <= config.round_duration_s:
             heapq.heappush(event_heap, (next_t, participant_id, candidate_index + 1))
 
@@ -370,7 +404,14 @@ def run_session(
     )
     assignments = apply_risk_aversion(assigned, risk_draws)
     assignments = _apply_risk_override(assignments, config.risk_aversion)
-    agents = {pid: Agent(participant_id=pid, profile=assignments.get(pid, PROFILE_PRESETS["rational"])) for pid in participants}
+    agents = {
+        pid: Agent(
+            participant_id=pid,
+            profile=assignments.get(pid, PROFILE_PRESETS["rational"]),
+            sim_seed=config.seed,
+        )
+        for pid in participants
+    }
 
     session_id = orch.start_session(
         label=f"abm-{config.seed}-{session_index + 1}",

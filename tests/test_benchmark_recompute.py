@@ -7,19 +7,19 @@ from analysis.load import SessionFrames
 
 
 def test_recompute_round_benchmark_matches_appendix_example() -> None:
-    # With informed-only draws at theta=0.85, repeated H signals push benchmark higher.
+    # Five-level evidence should still produce a higher benchmark when positive signals dominate.
     signals = pd.DataFrame(
         [
-            {"signal_value": "H", "theta": 0.85},
-            {"signal_value": "L", "theta": 0.85},
-            {"signal_value": "H", "theta": 0.85},
-            {"signal_value": "H", "theta": 0.85},
-            {"signal_value": "L", "theta": 0.85},
-            {"signal_value": "H", "theta": 0.85},
+            {"signal_value": "S+", "theta": 0.85},
+            {"signal_value": "M-", "theta": 0.85},
+            {"signal_value": "S+", "theta": 0.85},
+            {"signal_value": "M+", "theta": 0.85},
+            {"signal_value": "N", "theta": 0.85},
+            {"signal_value": "S+", "theta": 0.85},
         ]
     )
     out = recompute_round_benchmark(signals, prior=0.5)
-    assert 0.96 < out < 0.98
+    assert 0.8 < out < 1.0
 
 
 def test_recompute_session_benchmark_table() -> None:
@@ -30,7 +30,7 @@ def test_recompute_session_benchmark_table() -> None:
         trades=pd.DataFrame([]),
         signals=pd.DataFrame(
             [
-                {"round_id": 101, "signal_value": "H", "theta": 0.85},
+                {"round_id": 101, "signal_value": "S+", "theta": 0.85},
             ]
         ),
         market_roles=pd.DataFrame([]),

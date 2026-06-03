@@ -61,6 +61,42 @@ PROFILE_PRESETS: dict[str, BehavioralProfile] = {
         market_imitation=0.30,
         budget_variance=0.30,
     ),
+    "aggressive": BehavioralProfile(
+        name="aggressive",
+        risk_aversion=0.08,
+        bias=0.00,
+        stubbornness=0.08,
+        expertise=0.80,
+        market_imitation=0.45,
+        budget_variance=0.90,
+    ),
+    "cautious": BehavioralProfile(
+        name="cautious",
+        risk_aversion=0.85,
+        bias=0.00,
+        stubbornness=0.55,
+        expertise=0.88,
+        market_imitation=0.08,
+        budget_variance=0.05,
+    ),
+    "contrarian": BehavioralProfile(
+        name="contrarian",
+        risk_aversion=0.30,
+        bias=0.00,
+        stubbornness=0.35,
+        expertise=0.82,
+        market_imitation=-0.35,
+        budget_variance=0.30,
+    ),
+    "momentum": BehavioralProfile(
+        name="momentum",
+        risk_aversion=0.20,
+        bias=0.04,
+        stubbornness=0.12,
+        expertise=0.78,
+        market_imitation=0.92,
+        budget_variance=0.45,
+    ),
 }
 
 

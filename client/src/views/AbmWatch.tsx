@@ -8,6 +8,20 @@ import {
 interface Market {
   true_probability: number;
   outcome: number | null;
+  scenario: string;
+  treated_count: number;
+  treated_share: number;
+  informed_count: number;
+  informed_share: number;
+  informed_only_count: number;
+  informed_whale_count: number;
+  whale_count: number;
+  whale_share: number;
+  whale_only_count: number;
+  overlap_count: number;
+  overlap_share: number;
+  uninformed_count: number;
+  uninformed_share: number;
   b: number;
   round_duration_s: number;
   subject_count: number;
@@ -17,7 +31,11 @@ interface Bot {
   id: string;
   profile: string;
   role_tier: string;
+  role_group: "informed" | "whale" | "uninformed" | "informed_whale";
+  is_informed: boolean;
+  is_whale: boolean;
   risk_aversion: number;
+  starting_balance: number;
 }
 
 interface RoundSummary {
@@ -57,15 +75,39 @@ interface Payload {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+const DEFAULT_PROFILE_MIX = "rational:5,herder:2,noise:2";
+const AGENT_MIX_PRESETS: Array<{ id: string; mix: string }> = [
+  { id: "balanced_9", mix: "rational:5,herder:2,noise:2" },
+  { id: "trend_pressure", mix: "momentum:4,herder:3,overreact:2" },
+  { id: "contrarian_battle", mix: "contrarian:4,momentum:3,rational:2" },
+  { id: "risk_barbell", mix: "aggressive:4,cautious:3,rational:2" },
+  { id: "chaotic", mix: "noise:4,overreact:3,aggressive:2" },
+  { id: "defensive", mix: "cautious:4,stubborn:3,rational:2" },
+];
+const normalizeProfileMix = (mix: string) => {
+  const trimmed = mix.trim();
+  if (!trimmed || trimmed.toLowerCase() === "default") {
+    return DEFAULT_PROFILE_MIX;
+  }
+  return trimmed;
+};
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AbmWatch() {
   // ── Config state
   const [seed, setSeed] = useState(42);
-  const [subjectCount, setSubjectCount] = useState(8);
-  const [profileMix, setProfileMix] = useState("default");
-  const [b, setB] = useState(10);
+  const [marketNumber, setMarketNumber] = useState(2);
+  const [subjectCount, setSubjectCount] = useState(9);
+  const [agentPreset, setAgentPreset] = useState("balanced_9");
+  const [b, setB] = useState(36);
+  const [informedOnlyCount, setInformedOnlyCount] = useState(3);
+  const [informedWhaleCount, setInformedWhaleCount] = useState(0);
+  const [whaleOnlyCount, setWhaleOnlyCount] = useState(0);
+  const [scenario, setScenario] = useState("seeded");
+  const [orderSizeDist, setOrderSizeDist] = useState("geometric:p=0.30,tail=0.92");
+  const [reactionDelayS, setReactionDelayS] = useState(0.7);
+  const [reactionDelayJitterS, setReactionDelayJitterS] = useState(0.35);
 
   // ── Data state
   const [payload, setPayload] = useState<Payload | null>(null);
@@ -88,21 +130,37 @@ export default function AbmWatch() {
   // ── Fetch
   const fetchPayload = useCallback(async (opts: {
     seed: number;
+    marketNumber: number;
     subjectCount: number;
-    profileMix: string;
+    agentPreset: string;
     b: number;
+    informedOnlyCount: number;
+    informedWhaleCount: number;
+    whaleOnlyCount: number;
+    scenario: string;
+    orderSizeDist: string;
+    reactionDelayS: number;
+    reactionDelayJitterS: number;
   }) => {
     setLoading(true);
     setError(null);
     setPlaying(false);
     setClock(0);
     try {
+      const presetMix = AGENT_MIX_PRESETS.find(p => p.id === opts.agentPreset)?.mix ?? DEFAULT_PROFILE_MIX;
       const params = new URLSearchParams({
         seed: String(opts.seed),
+        market_number: String(opts.marketNumber),
         subject_count: String(opts.subjectCount),
-        profile_mix: opts.profileMix,
+        profile_mix: normalizeProfileMix(presetMix),
         b: String(opts.b),
-        market_number: "1",
+        informed_only_count: String(opts.informedOnlyCount),
+        informed_whale_count: String(opts.informedWhaleCount),
+        whale_only_count: String(opts.whaleOnlyCount),
+        scenario: opts.scenario,
+        order_size_dist: opts.orderSizeDist.trim(),
+        reaction_delay_s: String(opts.reactionDelayS),
+        reaction_delay_jitter_s: String(opts.reactionDelayJitterS),
       });
       const res = await fetch(`/abm/watch/run?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
@@ -116,7 +174,20 @@ export default function AbmWatch() {
 
   // Fetch on mount
   useEffect(() => {
-    fetchPayload({ seed, subjectCount, profileMix, b });
+    fetchPayload({
+      seed,
+      marketNumber,
+      subjectCount,
+      agentPreset,
+      b,
+      informedOnlyCount,
+      informedWhaleCount,
+      whaleOnlyCount,
+      scenario,
+      orderSizeDist,
+      reactionDelayS,
+      reactionDelayJitterS,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -124,8 +195,21 @@ export default function AbmWatch() {
   const regenerate = useCallback(() => {
     const newSeed = Math.random() * 99999 | 0;
     setSeed(newSeed);
-    fetchPayload({ seed: newSeed, subjectCount, profileMix, b });
-  }, [fetchPayload, subjectCount, profileMix, b]);
+    fetchPayload({
+      seed: newSeed,
+      marketNumber,
+      subjectCount,
+      agentPreset,
+      b,
+      informedOnlyCount,
+      informedWhaleCount,
+      whaleOnlyCount,
+      scenario,
+      orderSizeDist,
+      reactionDelayS,
+      reactionDelayJitterS,
+    });
+  }, [fetchPayload, marketNumber, subjectCount, agentPreset, b, informedOnlyCount, informedWhaleCount, whaleOnlyCount, scenario, orderSizeDist, reactionDelayS, reactionDelayJitterS]);
 
   // ── RAF playback engine
   useEffect(() => {
@@ -178,22 +262,29 @@ export default function AbmWatch() {
     : [];
 
   const tradeFeed = [...revealedTrades].reverse().slice(0, 30);
+  const resolved = totalDurationMs > 0 && clock >= totalDurationMs;
 
   const botPositions = payload
     ? payload.bots
         .map(bot => {
           const botTrades = revealedTrades.filter(t => t.participant_id === bot.id);
           const last = botTrades[botTrades.length - 1];
+          const liveBalance = last?.balance_after ?? bot.starting_balance;
+          const yesHeld = last?.yes_held ?? 0;
+          const noHeld = last?.no_held ?? 0;
+          const settledPayout = liveBalance + ((payload.market.outcome === 1) ? yesHeld : noHeld);
           return {
             ...bot,
-            balance: last?.balance_after ?? 100,
-            yes_held: last?.yes_held ?? 0,
-            no_held: last?.no_held ?? 0,
+            balance: liveBalance,
+            yes_held: yesHeld,
+            no_held: noHeld,
             belief: last?.belief ?? 0.5,
-            pnl: (last?.balance_after ?? 100) - 100,
+            pnl: liveBalance - bot.starting_balance,
+            settled_payout: settledPayout,
+            settled_pnl: settledPayout - bot.starting_balance,
           };
         })
-        .sort((a, bBot) => bBot.balance - a.balance)
+        .sort((a, bBot) => (resolved ? bBot.settled_payout - a.settled_payout : bBot.balance - a.balance))
     : [];
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -215,24 +306,38 @@ export default function AbmWatch() {
             />
           </label>
           <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Mkt
+            <input
+              type="number"
+              value={marketNumber}
+              onChange={e => setMarketNumber(Number(e.target.value))}
+              min={1}
+              max={4}
+              className="w-12 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
             Bots
             <input
               type="number"
               value={subjectCount}
               onChange={e => setSubjectCount(Number(e.target.value))}
               min={2}
-              max={32}
+              max={50}
               className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
             />
           </label>
           <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
-            Mix
-            <input
-              type="text"
-              value={profileMix}
-              onChange={e => setProfileMix(e.target.value)}
-              className="w-20 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
-            />
+            Agents
+            <select
+              value={agentPreset}
+              onChange={e => setAgentPreset(e.target.value)}
+              className="w-36 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            >
+              {AGENT_MIX_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.id}</option>
+              ))}
+            </select>
           </label>
           <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
             b
@@ -241,6 +346,86 @@ export default function AbmWatch() {
               value={b}
               onChange={e => setB(Number(e.target.value))}
               min={1}
+              className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Informed
+            <input
+              type="number"
+              value={informedOnlyCount}
+              onChange={e => setInformedOnlyCount(Number(e.target.value))}
+              min={0}
+              step={1}
+              className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Overlap
+            <input
+              type="number"
+              value={informedWhaleCount}
+              onChange={e => setInformedWhaleCount(Number(e.target.value))}
+              min={0}
+              step={1}
+              className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Whale
+            <input
+              type="number"
+              value={whaleOnlyCount}
+              onChange={e => setWhaleOnlyCount(Number(e.target.value))}
+              min={0}
+              step={1}
+              className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Scenario
+            <select
+              value={scenario}
+              onChange={e => setScenario(e.target.value)}
+              className="w-28 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            >
+              <option value="seeded">seeded</option>
+              <option value="market_default">market_default</option>
+              <option value="very_no">very_no</option>
+              <option value="no_lean">no_lean</option>
+              <option value="coinflip">coinflip</option>
+              <option value="yes_lean">yes_lean</option>
+              <option value="very_yes">very_yes</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Size
+            <input
+              type="text"
+              value={orderSizeDist}
+              onChange={e => setOrderSizeDist(e.target.value)}
+              className="w-44 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Delay
+            <input
+              type="number"
+              value={reactionDelayS}
+              onChange={e => setReactionDelayS(Number(e.target.value))}
+              min={0}
+              step={0.05}
+              className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground uppercase tracking-[0.15em]">
+            Jitter
+            <input
+              type="number"
+              value={reactionDelayJitterS}
+              onChange={e => setReactionDelayJitterS(Number(e.target.value))}
+              min={0}
+              step={0.05}
               className="w-14 bg-transparent border-b border-border px-1 py-0.5 text-xs font-mono text-foreground focus:outline-none"
             />
           </label>
@@ -280,9 +465,18 @@ export default function AbmWatch() {
                 True P: {pct(payload.market.true_probability)}
               </span>
               <span className="text-xs font-mono text-muted-foreground">
+                M{marketNumber} ·
+              </span>
+              <span className="text-xs font-mono text-muted-foreground">
                 b={payload.market.b} · {payload.market.subject_count} bots
               </span>
-              {clock >= totalDurationMs && totalDurationMs > 0 && (
+              <span className="text-xs font-mono text-muted-foreground">
+                I-only:{payload.market.informed_only_count} I∩W:{payload.market.informed_whale_count} W-only:{payload.market.whale_only_count} U:{payload.market.uninformed_count}
+              </span>
+              <span className="text-xs font-mono text-muted-foreground">
+                S:{payload.market.scenario}
+              </span>
+              {resolved && (
                 <span className="text-xs font-mono border border-border px-2 py-0.5">
                   Outcome: {payload.market.outcome === 1 ? "YES" : "NO"}
                 </span>
@@ -471,11 +665,28 @@ export default function AbmWatch() {
             <div className="border border-border p-4">
               <p className="text-xs font-mono text-muted-foreground mb-3 uppercase tracking-[0.12em]">
                 Bot Positions
+                <span className="ml-2 text-muted-foreground/40">
+                  (I-only:{botPositions.filter(b => b.role_group === "informed").length}
+                  {" "}I∩W:{botPositions.filter(b => b.role_group === "informed_whale").length}
+                  {" "}W-only:{botPositions.filter(b => b.role_group === "whale").length}
+                  {" "}U:{botPositions.filter(b => b.role_group === "uninformed").length})
+                </span>
               </p>
               <div className="space-y-1.5">
                 {botPositions.map(bot => (
                   <div key={bot.id} className="flex items-center gap-2 text-[11px] font-mono flex-wrap">
                     <span className="w-6 text-muted-foreground/60 shrink-0">{bot.id}</span>
+                    <span className={`px-1 border text-[9px] shrink-0 ${
+                      bot.role_group === "informed_whale"
+                        ? "border-cyan-300/40 text-cyan-200"
+                        : bot.role_group === "informed"
+                        ? "border-green-400/40 text-green-300"
+                        : bot.role_group === "whale"
+                          ? "border-amber-400/40 text-amber-300"
+                          : "border-slate-500/40 text-slate-300"
+                    }`}>
+                      {bot.role_group.toUpperCase()}
+                    </span>
                     <span className="px-1 border border-border text-[9px] text-muted-foreground/60 shrink-0">
                       {bot.profile}
                     </span>
@@ -488,6 +699,11 @@ export default function AbmWatch() {
                     <span className={bot.pnl >= 0 ? "text-green-400 tabular-nums" : "text-red-400 tabular-nums"}>
                       PnL:{bot.pnl >= 0 ? "+" : ""}{bot.pnl.toFixed(1)}
                     </span>
+                    {resolved && (
+                      <span className={bot.settled_pnl >= 0 ? "text-green-300 tabular-nums" : "text-red-300 tabular-nums"}>
+                        Final:{bot.settled_payout.toFixed(1)} ({bot.settled_pnl >= 0 ? "+" : ""}{bot.settled_pnl.toFixed(1)})
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

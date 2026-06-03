@@ -6,6 +6,8 @@ bot rosters, and market metadata suitable for client-side replay.
 from __future__ import annotations
 
 import os
+import random
+from decimal import Decimal
 
 from sqlalchemy import select
 
@@ -23,6 +25,52 @@ from server.db_models import Market, MarketResolution, MarketRole, Round
 from server.orchestrator import Orchestrator
 
 
+WATCH_SCENARIOS: dict[str, float] = {
+    "very_no": 0.10,
+    "no_lean": 0.30,
+    "coinflip": 0.50,
+    "yes_lean": 0.70,
+    "very_yes": 0.90,
+}
+
+
+def _role_sets_for_market(
+    *,
+    participants: list[str],
+    seed: int,
+    informed_only_count: int,
+    informed_whale_count: int,
+    whale_only_count: int,
+) -> tuple[set[str], set[str], set[str]]:
+    ordered = sorted(participants)
+    rng = random.Random(f"{seed}:watch-role-mix")
+    shuffled = ordered[:]
+    rng.shuffle(shuffled)
+    overlap = set(shuffled[:informed_whale_count])
+    informed_only = set(shuffled[informed_whale_count:informed_whale_count + informed_only_count])
+    whale_only = set(
+        shuffled[
+            informed_whale_count + informed_only_count:
+            informed_whale_count + informed_only_count + whale_only_count
+        ]
+    )
+    return informed_only, overlap, whale_only
+
+
+def _resolve_watch_scenario(*, seed: int, scenario: str) -> tuple[str, float | None]:
+    normalized = scenario.strip().lower()
+    if normalized == "market_default":
+        return "market_default", None
+    if normalized == "seeded":
+        names = list(WATCH_SCENARIOS.keys())
+        picked = names[seed % len(names)]
+        return picked, WATCH_SCENARIOS[picked]
+    if normalized not in WATCH_SCENARIOS:
+        valid = ", ".join(["seeded", "market_default", *WATCH_SCENARIOS.keys()])
+        raise ValueError(f"unknown scenario '{scenario}'. valid: {valid}")
+    return normalized, WATCH_SCENARIOS[normalized]
+
+
 def run_single_market(
     *,
     seed: int = 42,
@@ -30,6 +78,13 @@ def run_single_market(
     subject_count: int = 9,
     profile_mix: str = "rational:5,herder:2,noise:2",
     b: float = 36.0,
+    order_size_dist: str = "geometric:p=0.68,tail=0.35",
+    reaction_delay_s: float = 0.65,
+    reaction_delay_jitter_s: float = 0.35,
+    informed_only_count: int = 3,
+    informed_whale_count: int = 0,
+    whale_only_count: int = 0,
+    scenario: str = "seeded",
 ) -> dict:
     """Run one market to completion and return a JSON-serializable replay payload.
 
@@ -46,17 +101,52 @@ def run_single_market(
         Comma-separated ``profile:count`` pairs (e.g. ``"rational:5,herder:2,noise:2"``).
     b:
         LMSR liquidity parameter.
+    order_size_dist:
+        Order-size sampler spec (e.g. ``"geometric:p=0.45,tail=0.75"``).
+    reaction_delay_s:
+        Base hesitation (seconds) applied before each decision opportunity.
+    reaction_delay_jitter_s:
+        Extra uniform jitter added to hesitation on each decision opportunity.
+    informed_only_count:
+        Number of informed-only participants.
+    informed_whale_count:
+        Number of participants in the overlap between informed and whale.
+    whale_only_count:
+        Number of whale-only participants.
+    scenario:
+        One of ``seeded``, ``market_default``, or a named watch scenario such
+        as ``very_no``/``coinflip``/``very_yes``.
 
     Returns
     -------
     dict
         Keys: ``market``, ``bots``, ``rounds``, ``trades``.
     """
+    for name, value in (
+        ("informed_only_count", informed_only_count),
+        ("informed_whale_count", informed_whale_count),
+        ("whale_only_count", whale_only_count),
+    ):
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0, got {value}")
+    bucket_total = informed_only_count + informed_whale_count + whale_only_count
+    if bucket_total > subject_count:
+        raise ValueError(
+            "bucket counts must sum to less than or equal to subject_count, "
+            f"got {bucket_total} > {subject_count}"
+        )
+    informed_count = informed_only_count + informed_whale_count
+    whale_count = whale_only_count + informed_whale_count
+    uninformed_count = subject_count - bucket_total
     config = SimConfig(
         seed=seed,
         subject_count=subject_count,
+        treated_count=max(2, informed_count),
         profile_mix=profile_mix,
         b=b,
+        order_size_dist=order_size_dist,
+        reaction_delay_s=reaction_delay_s,
+        reaction_delay_jitter_s=reaction_delay_jitter_s,
         db_path=":memory:",
         include_practice=False,
         num_sessions=1,
@@ -88,13 +178,26 @@ def run_single_market(
         assignments = apply_risk_aversion(assigned, risk_draws)
         assignments = _apply_risk_override(assignments, config.risk_aversion)
         agents = {
-            pid: Agent(participant_id=pid, profile=assignments.get(pid, PROFILE_PRESETS["rational"]))
+            pid: Agent(
+                participant_id=pid,
+                profile=assignments.get(pid, PROFILE_PRESETS["rational"]),
+                sim_seed=config.seed,
+            )
             for pid in participants
         }
+        informed_only_ids, overlap_ids, whale_only_ids = _role_sets_for_market(
+            participants=participants,
+            seed=seed,
+            informed_only_count=informed_only_count,
+            informed_whale_count=informed_whale_count,
+            whale_only_count=whale_only_count,
+        )
+        # Split scenarios across seeds so market 2/3 true probabilities vary in watch mode.
+        rotation_id = 1 if (seed % 2 == 0) else 2
 
         session_id = orch.start_session(
             label=f"abm-watch-{seed}",
-            rotation_id=1,
+            rotation_id=rotation_id,
             subject_count=config.subject_count,
             treated_count=config.treated_count,
             lmsr_b_parameter=config.b,
@@ -103,12 +206,50 @@ def run_single_market(
 
         # Run markets 1..market_number; only collect trades for the target market
         trades_collected: list[dict] = []
+        selected_scenario_name = "market_default"
 
         def _collect(event: dict) -> None:
             trades_collected.append(event)
 
         for mn in range(1, market_number + 1):
             orch.start_market(session_id, mn)
+            if mn == market_number:
+                selected_scenario_name, scenario_prob = _resolve_watch_scenario(seed=seed, scenario=scenario)
+                with db_factory() as db:
+                    market_row = db.scalar(
+                        select(Market).where(
+                            Market.session_id == session_id,
+                            Market.market_number == mn,
+                        )
+                    )
+                    if market_row is None:
+                        raise RuntimeError(f"market {mn} not found while applying watch overrides")
+                    if scenario_prob is not None:
+                        market_row.true_probability = Decimal(str(scenario_prob))
+                    role_rows = db.scalars(select(MarketRole).where(MarketRole.market_id == market_row.id)).all()
+                    for role_row in role_rows:
+                        is_informed_only = role_row.participant_id in informed_only_ids
+                        is_overlap = role_row.participant_id in overlap_ids
+                        is_whale_only = role_row.participant_id in whale_only_ids
+                        is_informed = is_informed_only or is_overlap
+                        is_whale = is_whale_only or is_overlap
+                        if is_informed and is_whale:
+                            role_row.role_tier = "informed"
+                            role_row.endowment_tokens = Decimal("400")
+                            role_row.starting_balance = Decimal("400")
+                        elif is_informed:
+                            role_row.role_tier = "informed"
+                            role_row.endowment_tokens = Decimal("100")
+                            role_row.starting_balance = Decimal("100")
+                        elif is_whale:
+                            role_row.role_tier = "uninformed"
+                            role_row.endowment_tokens = Decimal("400")
+                            role_row.starting_balance = Decimal("400")
+                        else:
+                            role_row.role_tier = "uninformed"
+                            role_row.endowment_tokens = Decimal("100")
+                            role_row.starting_balance = Decimal("100")
+                    db.commit()
             for agent in agents.values():
                 agent.init_market()
             on_trade_fn = _collect if mn == market_number else None
@@ -158,6 +299,22 @@ def run_single_market(
 
         # Build role lookup: participant_id -> role_tier
         role_by_pid: dict[str, str] = {r.participant_id: r.role_tier for r in roles}
+        role_group_by_pid: dict[str, str] = {}
+        for role in roles:
+            is_informed = role.role_tier == "informed"
+            is_whale = float(role.endowment_tokens) > 100.0
+            if is_informed and is_whale:
+                role_group_by_pid[role.participant_id] = "informed_whale"
+            elif is_informed:
+                role_group_by_pid[role.participant_id] = "informed"
+            elif is_whale:
+                role_group_by_pid[role.participant_id] = "whale"
+            else:
+                role_group_by_pid[role.participant_id] = "uninformed"
+        informed_realized = sum(1 for g in role_group_by_pid.values() if g in {"informed", "informed_whale"})
+        whale_realized = sum(1 for g in role_group_by_pid.values() if g in {"whale", "informed_whale"})
+        overlap_realized = sum(1 for g in role_group_by_pid.values() if g == "informed_whale")
+        uninformed_realized = sum(1 for g in role_group_by_pid.values() if g == "uninformed")
 
         # Compute t_ms and sort trades
         round_duration_ms = config.round_duration_s * 1000
@@ -184,15 +341,37 @@ def run_single_market(
                 "id": pid,
                 "profile": agents[pid].profile.name,
                 "role_tier": role_by_pid.get(pid, "uninformed"),
+                "role_group": role_group_by_pid.get(pid, "uninformed"),
+                "is_informed": role_group_by_pid.get(pid, "uninformed") in {"informed", "informed_whale"},
+                "is_whale": role_group_by_pid.get(pid, "uninformed") in {"whale", "informed_whale"},
                 "risk_aversion": float(agents[pid].profile.risk_aversion),
+                "starting_balance": 100.0,
             }
             for pid in participants
         ]
+        start_balance_by_pid: dict[str, float] = {r.participant_id: float(r.endowment_tokens) for r in roles}
+        for bot in bots_payload:
+            bot["starting_balance"] = start_balance_by_pid.get(bot["id"], 100.0)
 
         return {
             "market": {
                 "true_probability": float(market_row.true_probability),
                 "outcome": int(res_row.outcome),
+                "rotation_id": rotation_id,
+                "scenario": selected_scenario_name,
+                "treated_count": informed_realized,
+                "treated_share": informed_realized / config.subject_count,
+                "informed_count": informed_realized,
+                "informed_share": informed_realized / config.subject_count,
+                "informed_only_count": sum(1 for g in role_group_by_pid.values() if g == "informed"),
+                "informed_whale_count": overlap_realized,
+                "whale_count": whale_realized,
+                "whale_share": whale_realized / config.subject_count,
+                "whale_only_count": sum(1 for g in role_group_by_pid.values() if g == "whale"),
+                "overlap_count": overlap_realized,
+                "overlap_share": overlap_realized / config.subject_count,
+                "uninformed_count": uninformed_realized,
+                "uninformed_share": uninformed_realized / config.subject_count,
                 "b": float(market_row.b_parameter),
                 "round_duration_s": round_duration_s,
                 "subject_count": config.subject_count,

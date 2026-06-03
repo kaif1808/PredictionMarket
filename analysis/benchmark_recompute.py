@@ -23,12 +23,13 @@ def recompute_round_benchmark(signals: pd.DataFrame, prior: float = 0.5) -> floa
         theta = float(row.theta)
         if not (0.5 < theta < 1.0):
             raise ValueError(f"invalid theta={theta}")
-        if row.signal_value == "H":
-            log_odds += math.log(theta / (1.0 - theta))
-        elif row.signal_value == "L":
-            log_odds += math.log((1.0 - theta) / theta)
-        else:
+        signal_value = row.signal_value
+        score_map = {"S+": 2, "M+": 1, "N": 0, "M-": -1, "S-": -2}
+        if signal_value not in score_map:
             raise ValueError(f"invalid signal_value={row.signal_value}")
+        alpha = math.log(theta / (1.0 - theta)) / 4.0
+        lr = math.exp(2.0 * alpha * score_map[signal_value])
+        log_odds += math.log(lr)
     if log_odds >= 0:
         z = math.exp(-log_odds)
         return 1.0 / (1.0 + z)

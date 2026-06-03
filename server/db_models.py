@@ -107,7 +107,7 @@ class Round(Base):
 class Signal(Base):
     __tablename__ = "signals"
     __table_args__ = (
-        CheckConstraint("signal_value IN ('H','L')", name="ck_signal_value"),
+        CheckConstraint("signal_value IN ('S+','M+','N','M-','S-')", name="ck_signal_value"),
         UniqueConstraint("round_id", "participant_id", name="uq_signal_round_participant"),
     )
 
