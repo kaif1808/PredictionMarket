@@ -114,7 +114,7 @@ class Signal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id", ondelete="CASCADE"), nullable=False)
     participant_id: Mapped[str] = mapped_column(ForeignKey("participants.id"), nullable=False)
-    signal_value: Mapped[str] = mapped_column(String(1), nullable=False)
+    signal_value: Mapped[str] = mapped_column(String(2), nullable=False)
     theta: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False)
     posterior: Mapped[Decimal] = mapped_column(Numeric(7, 6), nullable=False)
     delivered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

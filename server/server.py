@@ -86,7 +86,6 @@ SPA_ROOT_ROUTES = (
     "/trade",
     "/debrief",
     "/admin",
-    "/abm-watch",
 )
 
 @fastapi_app.get("/app/")
@@ -1128,6 +1127,8 @@ async def abm_watch_run(
     Intentionally unauthenticated — for calibration and visualization demos only.
     Returns: market metadata, bot roster, round summaries, full trade tape.
     """
+    if not settings.enable_abm:
+        raise HTTPException(status_code=404, detail="ABM watch is disabled")
     from calibration.abm.watch import run_single_market
     loop = asyncio.get_event_loop()
     try:

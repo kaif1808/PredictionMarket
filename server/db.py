@@ -17,7 +17,7 @@ if settings.database_url.startswith("sqlite"):
 
 engine = create_engine(settings.database_url, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-ALEMBIC_BASELINE_REVISION = "c4a1d9e8b6f2"
+ALEMBIC_BASELINE_REVISION = "2b7a9d4e6f01"
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -51,12 +51,3 @@ def init_db() -> None:
                 text("INSERT INTO alembic_version(version_num) VALUES (:version_num)"),
                 {"version_num": ALEMBIC_BASELINE_REVISION},
             )
-    else:
-        with engine.begin() as conn:
-            current_revision = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
-            if current_revision != ALEMBIC_BASELINE_REVISION:
-                conn.execute(text("DELETE FROM alembic_version"))
-                conn.execute(
-                    text("INSERT INTO alembic_version(version_num) VALUES (:version_num)"),
-                    {"version_num": ALEMBIC_BASELINE_REVISION},
-                )

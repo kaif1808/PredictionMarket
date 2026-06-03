@@ -30,11 +30,13 @@ def test_load_settings_defaults(monkeypatch) -> None:
     monkeypatch.delenv("COOKIE_SECURE", raising=False)
     monkeypatch.delenv("TOURNAMENT_TIE_BREAK_MODE", raising=False)
     monkeypatch.delenv("LMSR_B_PARAMETER", raising=False)
+    monkeypatch.delenv("ENABLE_ABM", raising=False)
     s = load_settings()
     assert "http://127.0.0.1:5173" in s.allowed_origins
     assert s.cookie_secure is False
     assert s.tournament_tie_break_mode == "shared_prize"
     assert s.lmsr_b_parameter == 18.0
+    assert s.enable_abm is False
 
 
 def test_load_settings_tie_break_mode(monkeypatch) -> None:
@@ -49,3 +51,10 @@ def test_load_settings_lmsr_b_parameter(monkeypatch) -> None:
     assert load_settings().lmsr_b_parameter == 22.5
     monkeypatch.setenv("LMSR_B_PARAMETER", "-1")
     assert load_settings().lmsr_b_parameter == 18.0
+
+
+def test_load_settings_enable_abm(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_ABM", "true")
+    assert load_settings().enable_abm is True
+    monkeypatch.setenv("ENABLE_ABM", "false")
+    assert load_settings().enable_abm is False

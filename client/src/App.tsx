@@ -9,7 +9,6 @@ import ComprehensionQuizScreen from "./views/aux/ComprehensionQuizScreen";
 import HoltLauryScreen from "./views/aux/HoltLauryScreen";
 import DebriefScreen from "./views/aux/DebriefScreen";
 import LobbyScreen from "./views/LobbyScreen";
-import AbmWatch from "./views/AbmWatch";
 
 function Home() {
   const navigate = useNavigate();
@@ -99,8 +98,6 @@ export default function App() {
       <Route path="/trade" element={<TradingView />} />
       <Route path="/debrief" element={<DebriefScreen />} />
       <Route path="/admin" element={<AdminPanel />} />
-      <Route path="/abm-watch" element={<AbmWatch />} />
-      <Route path="/app/abm-watch" element={<AbmWatch />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
