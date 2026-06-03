@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import socketio
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -1105,6 +1105,55 @@ async def emergency_session_close(
     _log_admin_action(db, session_id, "emergency_session_close", payload.reason)
     await sio.emit("session_closed", {"session_id": session_id}, room=_room_all(session_id))
     return {"ok": True, "forced": True, "rankings": len(rankings)}
+
+
+@fastapi_app.get("/abm/watch/run")
+async def abm_watch_run(
+    seed: int = Query(default=42, ge=0),
+    subject_count: int = Query(default=9, ge=2, le=50),
+    profile_mix: str = Query(default="rational:5,herder:2,noise:2"),
+    b: float = Query(default=36.0, gt=0),
+    market_number: int = Query(default=1, ge=1, le=4),
+    scenario: str = Query(default="seeded"),
+    informed_only_count: int = Query(default=3, ge=0),
+    informed_whale_count: int = Query(default=0, ge=0),
+    whale_only_count: int = Query(default=0, ge=0),
+    order_size_dist: str = Query(default="geometric:p=0.68,tail=0.35"),
+    reaction_delay_s: float = Query(default=0.65, ge=0),
+    reaction_delay_jitter_s: float = Query(default=0.35, ge=0),
+) -> JSONResponse:
+    """Run a single ABM market and return a replay payload.
+
+    Intentionally unauthenticated — for calibration and visualization demos only.
+    Returns: market metadata, bot roster, round summaries, full trade tape.
+    """
+    if not settings.enable_abm:
+        raise HTTPException(status_code=404, detail="ABM watch is disabled")
+    from calibration.abm.watch import run_single_market
+    loop = asyncio.get_event_loop()
+    try:
+        payload = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: run_single_market(
+                seed=seed,
+                market_number=market_number,
+                subject_count=subject_count,
+                profile_mix=profile_mix,
+                b=b,
+                scenario=scenario,
+                informed_only_count=informed_only_count,
+                informed_whale_count=informed_whale_count,
+                whale_only_count=whale_only_count,
+                order_size_dist=order_size_dist,
+                reaction_delay_s=reaction_delay_s,
+                reaction_delay_jitter_s=reaction_delay_jitter_s,
+            )),
+            timeout=120.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Simulation timeout (>120s)")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(content=payload)
 
 
 @fastapi_app.get("/admin/sessions/{session_id}/export.csv")

@@ -23,6 +23,7 @@ class Settings:
     cookie_secure: bool
     tournament_tie_break_mode: str
     lmsr_b_parameter: float
+    enable_abm: bool
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -94,4 +95,5 @@ def load_settings() -> Settings:
         cookie_secure=_parse_bool(os.getenv("COOKIE_SECURE"), default=False),
         tournament_tie_break_mode=_parse_tie_break_mode(os.getenv("TOURNAMENT_TIE_BREAK_MODE")),
         lmsr_b_parameter=_parse_positive_float(os.getenv("LMSR_B_PARAMETER"), default=18.0),
+        enable_abm=_parse_bool(os.getenv("ENABLE_ABM"), default=False),
     )

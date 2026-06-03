@@ -54,7 +54,7 @@ class RoundStartedEvent(BaseModel):
     yes_avg_cost: float | None = None
     no_avg_cost: float | None = None
     bulletin: BulletinPayload
-    signal_value: Literal["H", "L"] | None = None
+    signal_value: Literal["S+", "M+", "N", "M-", "S-"] | None = None
     signal_theta: float | None = None
     round_deadline_unix_ms: int
 

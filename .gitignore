@@ -11,3 +11,5 @@ analysis/output/
 tmp_*.db
 figma_design
 ECC/
+venv/
+.codex/

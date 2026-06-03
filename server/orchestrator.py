@@ -210,6 +210,28 @@ class Orchestrator:
         }
         return market
 
+    def _prior_by_participant_before_round(self, db: Session, market_id: int, round_number: int) -> dict[str, float]:
+        signal_rows = db.scalars(
+            select(Signal)
+            .join(Round, Signal.round_id == Round.id)
+            .where(
+                Round.market_id == market_id,
+                Round.round_number < round_number,
+                Signal.delivered.is_(True),
+            )
+            .order_by(Round.round_number, Signal.id)
+        ).all()
+        priors: dict[str, float] = {}
+        for signal_row in signal_rows:
+            pid = signal_row.participant_id
+            prior = priors.get(pid, 0.5)
+            priors[pid] = bayesian.update_posterior(
+                prior=prior,
+                signal=signal_row.signal_value,
+                theta=float(signal_row.theta),
+            )
+        return priors
+
     def start_round(self, session_id: int, round_number: int) -> Round:
         state = self._require_state(session_id)
         if state.phase not in {SessionPhase.MARKET_OPEN, SessionPhase.ROUND_CLOSED}:
@@ -241,13 +263,16 @@ class Orchestrator:
                 )
 
             true_outcome = self._draw_market_truth(session_id, market.id, float(market.true_probability))
+            prior_by_participant = self._prior_by_participant_before_round(db, market.id, round_number)
             draws = bayesian.draw_for_round(
                 session_id=session_id,
                 market_id=market.id,
                 round_id=round_row.id,
                 market_roles=market_roles,
                 true_outcome=true_outcome,
+                true_probability=float(market.true_probability),
                 stage=market.stage,
+                prior_by_participant=prior_by_participant,
             )
             for draw in draws:
                 db.add(
@@ -361,7 +386,16 @@ class Orchestrator:
             if market is None or round_row is None:
                 raise ValueError("No active market/round")
             closing_price = lmsr.price(float(market.q_yes), float(market.q_no), float(market.b_parameter))
-            signal_rows = db.scalars(select(Signal).where(Signal.round_id == round_row.id)).all()
+            signal_rows = db.scalars(
+                select(Signal)
+                .join(Round, Signal.round_id == Round.id)
+                .where(
+                    Round.market_id == market.id,
+                    Round.round_number <= round_row.round_number,
+                    Signal.delivered.is_(True),
+                )
+                .order_by(Round.round_number, Signal.id)
+            ).all()
             benchmark = bayesian.benchmark_price(
                 prior=0.5,
                 all_signals=[(s.signal_value, float(s.theta)) for s in signal_rows],
@@ -385,9 +419,10 @@ class Orchestrator:
             if market is None:
                 raise ValueError("No open market")
 
-            seed = hashlib.sha256(f"{session_id}:{market.id}:resolve".encode("utf-8")).hexdigest()[:16]
-            rng = random.Random(seed)
-            outcome = 1 if rng.random() < float(market.true_probability) else 0
+            # Use the same latent market truth that signal draws use so information quality
+            # is about the resolved payout outcome rather than an independent variable.
+            seed = hashlib.sha256(f"{session_id}:{market.id}:truth".encode("utf-8")).hexdigest()[:16]
+            outcome = self._draw_market_truth(session_id, market.id, float(market.true_probability))
             resolution = MarketResolution(market_id=market.id, outcome=outcome, rng_seed=seed)
             db.add(resolution)
 

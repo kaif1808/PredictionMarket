@@ -4,7 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from server.db import SessionLocal
-from server.db_models import Market, MarketRole, ParticipantSession, Round, Signal
+from server.db_models import Market, MarketResolution, MarketRole, ParticipantSession, Round, Signal
+from server.orchestrator import Orchestrator
 from server.server import fastapi_app
 
 
@@ -87,3 +88,28 @@ def test_default_session_nine_participants_and_signal_contracts() -> None:
         ).all()
     assert len(ended_rounds) >= 3
     assert all(r.bayesian_benchmark is not None for r in ended_rounds)
+
+
+def test_resolve_market_uses_same_truth_seed_as_signal_generation() -> None:
+    client = TestClient(fastapi_app)
+    auth = ("admin", "admin")
+
+    create = client.post("/admin/sessions", auth=auth, json={"label": "truth-consistency", "rotation_id": 1})
+    assert create.status_code == 200
+    session_id = int(create.json()["session_id"])
+
+    assert client.post(f"/admin/sessions/{session_id}/markets", auth=auth, json={"market_number": 2}).status_code == 200
+    rnd = client.post(f"/admin/sessions/{session_id}/rounds", auth=auth, json={"round_number": 1})
+    assert rnd.status_code == 200
+    assert client.post(f"/admin/sessions/{session_id}/rounds/1/end", auth=auth).status_code == 200
+    resolve = client.post(f"/admin/sessions/{session_id}/markets/2/resolve", auth=auth)
+    assert resolve.status_code == 200
+
+    with SessionLocal() as db:
+        market = db.scalar(select(Market).where(Market.session_id == session_id, Market.market_number == 2))
+        assert market is not None
+        resolution = db.scalar(select(MarketResolution).where(MarketResolution.market_id == market.id))
+        assert resolution is not None
+        expected = Orchestrator._draw_market_truth(session_id, int(market.id), float(market.true_probability))
+
+    assert int(resolution.outcome) == int(expected)
