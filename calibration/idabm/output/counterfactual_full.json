@@ -1,0 +1,21 @@
+{
+  "full": {
+    "experiment": "full",
+    "iters": 500,
+    "treatment_effect": {
+      "coef_has_informed": 0.2079875595019144,
+      "coef_has_whale": -0.010800676583190082,
+      "coef_const": 0.016452501735672843,
+      "pval_has_informed": 3.654592578647792e-179,
+      "pval_has_whale": 0.018943639923462315,
+      "r_squared": 0.8061028037696623,
+      "n_obs": 500,
+      "has_informed": 0.2079875595019144,
+      "has_whale": -0.010800676583190082
+    },
+    "deviation_mean": 0.11465711883803985,
+    "deviation_std": 0.1156941982918583,
+    "empirical_abs_deviation": 0.37613941666666667,
+    "n_valid": 500
+  }
+}

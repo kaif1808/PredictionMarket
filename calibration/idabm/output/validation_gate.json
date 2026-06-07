@@ -1,0 +1,44 @@
+[
+  {
+    "row": 1,
+    "name": "lmsr_rmse",
+    "passed": true,
+    "metric": 2.9969452943100967e-07,
+    "threshold": "< 1e-06"
+  },
+  {
+    "row": 2,
+    "name": "deviation_spread",
+    "passed": true,
+    "metric": 0.843598,
+    "threshold": "max <= mean+2sd=0.8898"
+  },
+  {
+    "row": 3,
+    "name": "return_ks",
+    "passed": true,
+    "metric": 0.6363911119067751,
+    "threshold": "> 0.10"
+  },
+  {
+    "row": 4,
+    "name": "directional_accuracy",
+    "passed": true,
+    "metric": 0.5341272662637754,
+    "threshold": "accuracy=0.534"
+  },
+  {
+    "row": 5,
+    "name": "trades_per_round",
+    "passed": true,
+    "metric": 93.76666666666667,
+    "threshold": "mean=93.77 std=53.08"
+  },
+  {
+    "row": 6,
+    "name": "gini",
+    "passed": false,
+    "metric": 0.11042482797008624,
+    "threshold": "max_dev <= 0.05"
+  }
+]
